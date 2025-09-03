@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:equatable/equatable.dart';
 import '../models/task.dart';
@@ -40,6 +41,15 @@ class CompleteTask extends TasksEvent {
   List<Object> get props => [id];
 }
 
+class StartTasksStream extends TasksEvent {}
+class StopTasksStream extends TasksEvent {}
+class TasksUpdated extends TasksEvent {
+  final List<Task> tasks;
+  TasksUpdated(this.tasks);
+  @override
+  List<Object> get props => [tasks];
+}
+
 // States
 abstract class TasksState extends Equatable {
   @override
@@ -71,6 +81,8 @@ class TasksError extends TasksState {
 class TasksBloc extends Bloc<TasksEvent, TasksState> {
   final DatabaseService _databaseService = DatabaseService();
   final NotificationService _notificationService = NotificationService();
+  
+  StreamSubscription<List<Task>>? _tasksStreamSubscription;
 
   TasksBloc() : super(TasksInitial()) {
     on<LoadTasks>(_onLoadTasks);
@@ -79,6 +91,18 @@ class TasksBloc extends Bloc<TasksEvent, TasksState> {
     on<UpdateTask>(_onUpdateTask);
     on<DeleteTask>(_onDeleteTask);
     on<CompleteTask>(_onCompleteTask);
+    on<StartTasksStream>(_onStartTasksStream);
+    on<StopTasksStream>(_onStopTasksStream);
+    on<TasksUpdated>(_onTasksUpdated);
+    
+    // Автоматически начинаем стрим при создании BLoC
+    add(StartTasksStream());
+  }
+
+  @override
+  Future<void> close() {
+    _tasksStreamSubscription?.cancel();
+    return super.close();
   }
 
   Future<void> _onLoadTasks(LoadTasks event, Emitter<TasksState> emit) async {
@@ -198,5 +222,27 @@ class TasksBloc extends Bloc<TasksEvent, TasksState> {
       }
       emit(TasksError(e.toString()));
     }
+  }
+
+  void _onStartTasksStream(StartTasksStream event, Emitter<TasksState> emit) {
+    emit(TasksLoading());
+    
+    _tasksStreamSubscription?.cancel();
+    _tasksStreamSubscription = _databaseService.getTasksStream().listen(
+      (tasks) {
+        add(TasksUpdated(tasks));
+      },
+      onError: (error) {
+        emit(TasksError(error.toString()));
+      },
+    );
+  }
+
+  void _onStopTasksStream(StopTasksStream event, Emitter<TasksState> emit) {
+    _tasksStreamSubscription?.cancel();
+  }
+
+  void _onTasksUpdated(TasksUpdated event, Emitter<TasksState> emit) {
+    emit(TasksLoaded(event.tasks));
   }
 }

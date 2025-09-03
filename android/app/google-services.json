@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "123456789",
-    "project_id": "studytodoapp-demo",
-    "storage_bucket": "studytodoapp-demo.appspot.com"
+    "project_number": "794235708814",
+    "project_id": "studytodo-50b0a",
+    "storage_bucket": "studytodo-50b0a.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:123456789:android:abcdefghijklmnop",
+        "mobilesdk_app_id": "1:794235708814:android:02ff3b41b5db6ddcdff0df",
         "android_client_info": {
           "package_name": "com.example.studytodoapp"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "AIzaSyDemoKeyForStudyTodoApp"
+          "current_key": "AIzaSyBb-bWVtYaaNzGsc8oeUXKaPI73ZhmACtA"
         }
       ],
       "services": {

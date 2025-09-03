@@ -6,12 +6,14 @@ import 'package:google_fonts/google_fonts.dart';
 import 'blocs/subjects_bloc.dart';
 import 'blocs/tasks_bloc.dart';
 import 'services/notification_service.dart';
+import 'services/database_service.dart';
 import 'widgets/main_navigation.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp();
   await NotificationService().initialize();
+  DatabaseService().initialize();
   runApp(StudyTodoApp());
 }
 

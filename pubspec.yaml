@@ -46,6 +46,7 @@ dependencies:
   path_provider: ^2.1.1
   shared_preferences: ^2.2.2
   permission_handler: ^11.1.0
+  connectivity_plus: ^5.0.2
 
 dev_dependencies:
   flutter_test:
@@ -53,6 +54,12 @@ dev_dependencies:
   
   flutter_lints: ^3.0.1
   build_runner: ^2.4.7
+  
+  # Тестирование
+  mockito: ^5.4.4
+  bloc_test: ^9.1.6
+  integration_test:
+    sdk: flutter
 
 flutter:
   uses-material-design: true
