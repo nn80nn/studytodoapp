@@ -41,6 +41,13 @@ class CompleteTask extends TasksEvent {
   List<Object> get props => [id];
 }
 
+class UnCompleteTask extends TasksEvent {
+  final String id;
+  UnCompleteTask(this.id);
+  @override
+  List<Object> get props => [id];
+}
+
 class StartTasksStream extends TasksEvent {}
 class StopTasksStream extends TasksEvent {}
 class TasksUpdated extends TasksEvent {
@@ -91,6 +98,7 @@ class TasksBloc extends Bloc<TasksEvent, TasksState> {
     on<UpdateTask>(_onUpdateTask);
     on<DeleteTask>(_onDeleteTask);
     on<CompleteTask>(_onCompleteTask);
+    on<UnCompleteTask>(_onUnCompleteTask);
     on<StartTasksStream>(_onStartTasksStream);
     on<StopTasksStream>(_onStopTasksStream);
     on<TasksUpdated>(_onTasksUpdated);
@@ -212,6 +220,34 @@ class TasksBloc extends Bloc<TasksEvent, TasksState> {
     try {
       if (originalTask != null) {
         final updatedTask = originalTask.copyWith(status: TaskStatus.completed);
+        await _databaseService.updateTask(updatedTask);
+        final tasks = await _databaseService.getTasks();
+        emit(TasksLoaded(tasks));
+      }
+    } catch (e) {
+      if (currentState is TasksLoaded) {
+        emit(TasksLoaded(currentState.tasks));
+      }
+      emit(TasksError(e.toString()));
+    }
+  }
+
+  Future<void> _onUnCompleteTask(UnCompleteTask event, Emitter<TasksState> emit) async {
+    // Оптимистичное обновление
+    final currentState = state;
+    Task? originalTask;
+    if (currentState is TasksLoaded) {
+      originalTask = currentState.tasks.firstWhere((t) => t.id == event.id);
+      final updatedTask = originalTask.copyWith(status: TaskStatus.pending);
+      final updatedTasks = currentState.tasks.map((task) {
+        return task.id == event.id ? updatedTask : task;
+      }).toList();
+      emit(TasksLoaded(updatedTasks));
+    }
+    
+    try {
+      if (originalTask != null) {
+        final updatedTask = originalTask.copyWith(status: TaskStatus.pending);
         await _databaseService.updateTask(updatedTask);
         final tasks = await _databaseService.getTasks();
         emit(TasksLoaded(tasks));

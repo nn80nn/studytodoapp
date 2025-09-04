@@ -27,15 +27,15 @@ class TaskCard extends StatelessWidget {
         (task.status == TaskStatus.pending && task.deadline.isBefore(DateTime.now()));
     
     // Определяем цвет карточки в зависимости от статуса
-    Color cardColor = subject.color.withValues(alpha: 0.05);
-    Color borderColor = subject.color.withValues(alpha: 0.2);
+    Color cardColor = subject.color.withOpacity(0.05);
+    Color borderColor = subject.color.withOpacity(0.2);
     
     if (isCompleted) {
-      cardColor = Colors.green.withValues(alpha: 0.1);
-      borderColor = Colors.green.withValues(alpha: 0.3);
+      cardColor = Colors.green.withOpacity(0.1);
+      borderColor = Colors.green.withOpacity(0.3);
     } else if (isOverdue) {
-      cardColor = Colors.red.withValues(alpha: 0.1);
-      borderColor = Colors.red.withValues(alpha: 0.3);
+      cardColor = Colors.red.withOpacity(0.1);
+      borderColor = Colors.red.withOpacity(0.3);
     }
 
     return Container(
@@ -45,163 +45,178 @@ class TaskCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
         border: Border.all(color: borderColor, width: 1),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
+      child: ListTile(
+        contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        
+        // Левая полоска цвета предмета
+        leading: Container(
+          width: 4,
+          height: 40,
+          decoration: BoxDecoration(
+            color: subject.color,
+            borderRadius: BorderRadius.circular(2),
+          ),
+        ),
+        
+        title: Text(
+          task.title,
+          style: theme.textTheme.titleSmall?.copyWith(
+            decoration: isCompleted ? TextDecoration.lineThrough : null,
+            color: isCompleted 
+                ? theme.colorScheme.onSurfaceVariant 
+                : theme.colorScheme.onSurface,
+            fontWeight: FontWeight.w500,
+          ),
+        ),
+        
+        subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Левая полоска цвета предмета
-            Container(
-              width: 4,
-              height: 40,
-              decoration: BoxDecoration(
-                color: subject.color,
-                borderRadius: BorderRadius.circular(2),
+            if (task.description != null && task.description!.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                task.description!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  decoration: isCompleted ? TextDecoration.lineThrough : null,
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
               ),
-            ),
-            const SizedBox(width: 12),
-            
-            // Основное содержимое
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  // Title
-                  Text(
-                    task.title,
-                    style: theme.textTheme.titleSmall?.copyWith(
-                      decoration: isCompleted ? TextDecoration.lineThrough : null,
-                      color: isCompleted 
-                          ? theme.colorScheme.onSurfaceVariant 
-                          : theme.colorScheme.onSurface,
+            ],
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                // Дедлайн
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.schedule,
+                      size: 14,
+                      color: isOverdue ? Colors.red : theme.colorScheme.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      _formatDate(task.deadline),
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: isOverdue ? Colors.red : theme.colorScheme.onSurfaceVariant,
+                        fontWeight: isOverdue ? FontWeight.w500 : null,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(width: 16),
+                
+                // Приоритет
+                Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                  decoration: BoxDecoration(
+                    color: _getPriorityColor(task.priority).withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(
+                      color: _getPriorityColor(task.priority).withOpacity(0.5),
+                      width: 1,
+                    ),
+                  ),
+                  child: Text(
+                    _formatPriority(task.priority),
+                    style: theme.textTheme.labelSmall?.copyWith(
+                      color: _getPriorityColor(task.priority),
                       fontWeight: FontWeight.w500,
                     ),
                   ),
-                  
-                  // Description
-                  if (task.description != null && task.description!.isNotEmpty) ...[
-                    const SizedBox(height: 4),
-                    Text(
-                      task.description!,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        decoration: isCompleted ? TextDecoration.lineThrough : null,
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
-                  
-                  const SizedBox(height: 8),
-                  
-                  // Дедлайн и приоритет
-                  Row(
+                ),
+              ],
+            ),
+          ],
+        ),
+        
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Кнопка завершения (остается видимой)
+            if (!isCompleted)
+              IconButton(
+                icon: Icon(
+                  Icons.check_circle_outline,
+                  color: subject.color,
+                  size: 28,
+                ),
+                onPressed: () {
+                  context.read<TasksBloc>().add(CompleteTask(task.id));
+                  onCompleted?.call();
+                },
+                tooltip: 'Отметить как выполненное',
+              ),
+            
+            // Меню с тремя точками
+            PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert),
+              onSelected: (String value) {
+                switch (value) {
+                  case 'edit':
+                    _showEditTaskDialog(context);
+                    break;
+                  case 'complete':
+                    if (!isCompleted) {
+                      context.read<TasksBloc>().add(CompleteTask(task.id));
+                      onCompleted?.call();
+                    }
+                    break;
+                  case 'uncomplete':
+                    if (isCompleted) {
+                      context.read<TasksBloc>().add(UnCompleteTask(task.id));
+                      onCompleted?.call();
+                    }
+                    break;
+                  case 'delete':
+                    _showDeleteDialog(context);
+                    break;
+                }
+              },
+              itemBuilder: (BuildContext context) => [
+                PopupMenuItem<String>(
+                  value: 'edit',
+                  child: Row(
                     children: [
-                      // Дедлайн
-                      Expanded(
-                        child: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(
-                              Icons.schedule,
-                              size: 14,
-                              color: isOverdue ? Colors.red : theme.colorScheme.onSurfaceVariant,
-                            ),
-                            const SizedBox(width: 4),
-                            Flexible(
-                              child: Text(
-                                _formatDate(task.deadline),
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: isOverdue ? Colors.red : theme.colorScheme.onSurfaceVariant,
-                                  fontWeight: isOverdue ? FontWeight.w500 : null,
-                                ),
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      
-                      // Приоритет
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                        decoration: BoxDecoration(
-                          color: _getPriorityColor(task.priority).withValues(alpha: 0.2),
-                          borderRadius: BorderRadius.circular(10),
-                          border: Border.all(
-                            color: _getPriorityColor(task.priority).withValues(alpha: 0.5),
-                            width: 1,
-                          ),
-                        ),
-                        child: Text(
-                          _formatPriority(task.priority),
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: _getPriorityColor(task.priority),
-                            fontWeight: FontWeight.w500,
-                            fontSize: 10,
-                          ),
-                        ),
-                      ),
+                      Icon(Icons.edit, color: Colors.blue, size: 20),
+                      const SizedBox(width: 12),
+                      const Text('Редактировать'),
                     ],
                   ),
-                ],
-              ),
-            ),
-            
-            // Действия справа
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                // Кнопка завершения
-                IconButton(
-                  icon: Icon(
-                    isCompleted ? Icons.check_circle : Icons.check_circle_outline,
-                    color: isCompleted ? Colors.green : subject.color,
-                    size: 24,
-                  ),
-                  onPressed: isCompleted ? null : () {
-                    context.read<TasksBloc>().add(CompleteTask(task.id));
-                    onCompleted?.call();
-                  },
-                  tooltip: isCompleted ? 'Выполнено' : 'Отметить как выполненное',
                 ),
-                
-                // Меню действий
-                PopupMenuButton<String>(
-                  onSelected: (value) {
-                    switch (value) {
-                      case 'edit':
-                        _showEditTaskDialog(context);
-                        break;
-                      case 'delete':
-                        _showDeleteDialog(context);
-                        break;
-                    }
-                  },
-                  itemBuilder: (context) => [
-                    const PopupMenuItem(
-                      value: 'edit',
-                      child: Row(
-                        children: [
-                          Icon(Icons.edit, color: Colors.blue, size: 20),
-                          SizedBox(width: 8),
-                          Text('Редактировать'),
-                        ],
-                      ),
+                if (!isCompleted)
+                  PopupMenuItem<String>(
+                    value: 'complete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.check_circle_outline, color: Colors.green, size: 20),
+                        const SizedBox(width: 12),
+                        const Text('Выполнить'),
+                      ],
                     ),
-                    const PopupMenuItem(
-                      value: 'delete',
-                      child: Row(
-                        children: [
-                          Icon(Icons.delete_outline, color: Colors.red, size: 20),
-                          SizedBox(width: 8),
-                          Text('Удалить'),
-                        ],
-                      ),
+                  ),
+                if (isCompleted)
+                  PopupMenuItem<String>(
+                    value: 'uncomplete',
+                    child: Row(
+                      children: [
+                        Icon(Icons.refresh, color: Colors.orange, size: 20),
+                        const SizedBox(width: 12),
+                        const Text('Сделать незавершенной'),
+                      ],
                     ),
-                  ],
-                  icon: const Icon(Icons.more_vert, size: 18),
+                  ),
+                PopupMenuItem<String>(
+                  value: 'delete',
+                  child: Row(
+                    children: [
+                      Icon(Icons.delete_outline, color: Colors.red, size: 20),
+                      const SizedBox(width: 12),
+                      const Text('Удалить'),
+                    ],
+                  ),
                 ),
               ],
             ),
@@ -265,11 +280,11 @@ class TaskCard extends StatelessWidget {
   String _formatPriority(TaskPriority priority) {
     switch (priority) {
       case TaskPriority.low:
-        return 'Низ';
+        return 'Низкий';
       case TaskPriority.medium:
-        return 'Сред';
+        return 'Средний';
       case TaskPriority.high:
-        return 'Выс';
+        return 'Высокий';
     }
   }
 

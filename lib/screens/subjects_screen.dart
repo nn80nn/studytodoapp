@@ -248,10 +248,14 @@ class _AddEditSubjectDialogState extends State<_AddEditSubjectDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: Text(widget.subject == null ? 'Добавить предмет' : 'Редактировать предмет'),
-      content: SingleChildScrollView(
+      title: Text(
+        widget.subject == null ? 'Добавить предмет' : 'Редактировать предмет',
+      ),
+      content: SizedBox(
+        width: 400,
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             TextField(
               controller: _nameController,
@@ -266,8 +270,8 @@ class _AddEditSubjectDialogState extends State<_AddEditSubjectDialog> {
             const SizedBox(height: 16),
             const Text('Выберите цвет:'),
             const SizedBox(height: 12),
-            Container(
-              constraints: const BoxConstraints(maxHeight: 200),
+            SizedBox(
+              height: 200,
               child: GridView.builder(
                 shrinkWrap: true,
                 gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -322,38 +326,46 @@ class _AddEditSubjectDialogState extends State<_AddEditSubjectDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: const Text('Отмена'),
         ),
-        ElevatedButton(
-          onPressed: _nameController.text.isNotEmpty
-              ? () {
-                  if (widget.subject == null) {
-                    // Добавляем новый предмет
-                    final subject = Subject(
-                      id: DateTime.now().millisecondsSinceEpoch.toString(),
-                      name: _nameController.text,
-                      color: _selectedColor,
-                      description: _descriptionController.text.isNotEmpty 
-                          ? _descriptionController.text 
-                          : null,
-                      createdAt: DateTime.now(),
-                    );
-                    context.read<SubjectsBloc>().add(AddSubject(subject));
-                  } else {
-                    // Обновляем существующий предмет
-                    final updatedSubject = Subject(
-                      id: widget.subject!.id,
-                      name: _nameController.text,
-                      color: _selectedColor,
-                      description: _descriptionController.text.isNotEmpty 
-                          ? _descriptionController.text 
-                          : null,
-                      createdAt: widget.subject!.createdAt,
-                    );
-                    context.read<SubjectsBloc>().add(UpdateSubject(updatedSubject));
-                  }
-                  Navigator.of(context).pop();
-                }
-              : null,
-          child: Text(widget.subject == null ? 'Добавить' : 'Сохранить'),
+        ListenableBuilder(
+          listenable: _nameController,
+          builder: (context, child) {
+            return ElevatedButton(
+              onPressed: _nameController.text.trim().isNotEmpty
+                  ? () {
+                      final name = _nameController.text.trim();
+                      if (name.isEmpty) return;
+                      
+                      if (widget.subject == null) {
+                        // Добавляем новый предмет
+                        final subject = Subject(
+                          id: DateTime.now().millisecondsSinceEpoch.toString(),
+                          name: name,
+                          color: _selectedColor,
+                          description: _descriptionController.text.trim().isNotEmpty 
+                              ? _descriptionController.text.trim() 
+                              : null,
+                          createdAt: DateTime.now(),
+                        );
+                        context.read<SubjectsBloc>().add(AddSubject(subject));
+                      } else {
+                        // Обновляем существующий предмет
+                        final updatedSubject = Subject(
+                          id: widget.subject!.id,
+                          name: name,
+                          color: _selectedColor,
+                          description: _descriptionController.text.trim().isNotEmpty 
+                              ? _descriptionController.text.trim() 
+                              : null,
+                          createdAt: widget.subject!.createdAt,
+                        );
+                        context.read<SubjectsBloc>().add(UpdateSubject(updatedSubject));
+                      }
+                      Navigator.of(context).pop();
+                    }
+                  : null,
+              child: Text(widget.subject == null ? 'Добавить' : 'Сохранить'),
+            );
+          },
         ),
       ],
     );

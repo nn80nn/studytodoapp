@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'blocs/subjects_bloc.dart';
 import 'blocs/tasks_bloc.dart';
+import 'blocs/auth_bloc.dart';
 import 'services/notification_service.dart';
 import 'services/database_service.dart';
 import 'widgets/main_navigation.dart';
@@ -32,6 +33,7 @@ class StudyTodoApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MultiBlocProvider(
       providers: [
+        BlocProvider(create: (context) => AuthBloc()),
         BlocProvider(create: (context) => SubjectsBloc()..add(LoadSubjects())),
         BlocProvider(create: (context) => TasksBloc()..add(LoadTasks())),
       ],

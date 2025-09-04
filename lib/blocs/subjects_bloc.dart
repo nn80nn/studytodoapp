@@ -33,6 +33,15 @@ class DeleteSubject extends SubjectsEvent {
   List<Object> get props => [id];
 }
 
+class StartSubjectsStream extends SubjectsEvent {}
+class StopSubjectsStream extends SubjectsEvent {}
+class SubjectsUpdated extends SubjectsEvent {
+  final List<Subject> subjects;
+  SubjectsUpdated(this.subjects);
+  @override
+  List<Object> get props => [subjects];
+}
+
 // States
 abstract class SubjectsState extends Equatable {
   @override
@@ -63,6 +72,8 @@ class SubjectsError extends SubjectsState {
 // Bloc
 class SubjectsBloc extends Bloc<SubjectsEvent, SubjectsState> {
   final DatabaseService _databaseService = DatabaseService();
+  
+  StreamSubscription<List<Subject>>? _subjectsStreamSubscription;
 
   SubjectsBloc() : super(SubjectsInitial()) {
     on<LoadSubjects>(_onLoadSubjects);
@@ -70,6 +81,18 @@ class SubjectsBloc extends Bloc<SubjectsEvent, SubjectsState> {
     on<AddSubject>(_onAddSubject);
     on<UpdateSubject>(_onUpdateSubject);
     on<DeleteSubject>(_onDeleteSubject);
+    on<StartSubjectsStream>(_onStartSubjectsStream);
+    on<StopSubjectsStream>(_onStopSubjectsStream);
+    on<SubjectsUpdated>(_onSubjectsUpdated);
+    
+    // Автоматически начинаем стрим при создании BLoC
+    add(StartSubjectsStream());
+  }
+
+  @override
+  Future<void> close() {
+    _subjectsStreamSubscription?.cancel();
+    return super.close();
   }
 
   Future<void> _onLoadSubjects(LoadSubjects event, Emitter<SubjectsState> emit) async {
@@ -96,66 +119,55 @@ class SubjectsBloc extends Bloc<SubjectsEvent, SubjectsState> {
   }
 
   Future<void> _onAddSubject(AddSubject event, Emitter<SubjectsState> emit) async {
-    // Оптимистичное обновление
-    final currentState = state;
-    if (currentState is SubjectsLoaded) {
-      final updatedSubjects = List<Subject>.from(currentState.subjects)..add(event.subject);
-      emit(SubjectsLoaded(updatedSubjects));
-    }
-    
     try {
       await _databaseService.addSubject(event.subject);
-      final subjects = await _databaseService.getSubjects();
-      emit(SubjectsLoaded(subjects));
+      // Не нужно emit здесь - stream автоматически обновит состояние
     } catch (e) {
-      if (currentState is SubjectsLoaded) {
-        emit(SubjectsLoaded(currentState.subjects));
-      }
       emit(SubjectsError(e.toString()));
     }
   }
 
   Future<void> _onUpdateSubject(UpdateSubject event, Emitter<SubjectsState> emit) async {
-    // Оптимистичное обновление
-    final currentState = state;
-    if (currentState is SubjectsLoaded) {
-      final updatedSubjects = currentState.subjects.map((subject) {
-        return subject.id == event.subject.id ? event.subject : subject;
-      }).toList();
-      emit(SubjectsLoaded(updatedSubjects));
-    }
-    
     try {
       await _databaseService.updateSubject(event.subject);
-      final subjects = await _databaseService.getSubjects();
-      emit(SubjectsLoaded(subjects));
+      // Не нужно emit здесь - stream автоматически обновит состояние
     } catch (e) {
-      if (currentState is SubjectsLoaded) {
-        emit(SubjectsLoaded(currentState.subjects));
-      }
       emit(SubjectsError(e.toString()));
     }
   }
 
   Future<void> _onDeleteSubject(DeleteSubject event, Emitter<SubjectsState> emit) async {
-    // Оптимистичное обновление
-    final currentState = state;
-    Subject? deletedSubject;
-    if (currentState is SubjectsLoaded) {
-      deletedSubject = currentState.subjects.firstWhere((subject) => subject.id == event.id);
-      final updatedSubjects = currentState.subjects.where((subject) => subject.id != event.id).toList();
-      emit(SubjectsLoaded(updatedSubjects));
-    }
-    
     try {
       await _databaseService.deleteSubject(event.id);
-      final subjects = await _databaseService.getSubjects();
-      emit(SubjectsLoaded(subjects));
+      // Не нужно emit здесь - stream автоматически обновит состояние
     } catch (e) {
-      if (currentState is SubjectsLoaded && deletedSubject != null) {
-        emit(SubjectsLoaded(currentState.subjects));
-      }
       emit(SubjectsError(e.toString()));
     }
+  }
+
+  void _onStartSubjectsStream(StartSubjectsStream event, Emitter<SubjectsState> emit) {
+    emit(SubjectsLoading());
+    
+    _subjectsStreamSubscription?.cancel();
+    _subjectsStreamSubscription = _databaseService.getSubjectsStream().listen(
+      (subjects) {
+        if (!isClosed) {
+          add(SubjectsUpdated(subjects));
+        }
+      },
+      onError: (error) {
+        if (!isClosed && !emit.isDone) {
+          emit(SubjectsError(error.toString()));
+        }
+      },
+    );
+  }
+
+  void _onStopSubjectsStream(StopSubjectsStream event, Emitter<SubjectsState> emit) {
+    _subjectsStreamSubscription?.cancel();
+  }
+
+  void _onSubjectsUpdated(SubjectsUpdated event, Emitter<SubjectsState> emit) {
+    emit(SubjectsLoaded(event.subjects));
   }
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class Subject {
   final String id;
@@ -28,6 +29,17 @@ class Subject {
     name: json['name'],
     color: Color(json['color']),
     description: json['description'],
-    createdAt: DateTime.fromMillisecondsSinceEpoch(json['createdAt']),
+    createdAt: _parseDateTime(json['createdAt']),
   );
+
+  static DateTime _parseDateTime(dynamic dateTime) {
+    if (dateTime is Timestamp) {
+      return dateTime.toDate();
+    } else if (dateTime is int) {
+      return DateTime.fromMillisecondsSinceEpoch(dateTime);
+    } else if (dateTime is String) {
+      return DateTime.parse(dateTime);
+    }
+    return DateTime.now();
+  }
 }

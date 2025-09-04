@@ -1,8 +1,10 @@
 import 'dart:async';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import '../models/task.dart';
 import '../models/subject.dart';
+import '../models/user_profile.dart';
 
 class DatabaseService {
   static final DatabaseService _instance = DatabaseService._internal();
@@ -41,8 +43,11 @@ class DatabaseService {
 
   // Subjects
   Future<List<Subject>> getSubjects() async {
+    if (!isUserAuthenticated) return [];
+    
     try {
       final snapshot = await _firestore.collection('subjects')
+          .where('userId', isEqualTo: currentUserId)
           .orderBy('createdAt', descending: false)
           .get(GetOptions(source: _isOnline ? Source.serverAndCache : Source.cache));
       return snapshot.docs.map((doc) => Subject.fromJson({
@@ -59,16 +64,37 @@ class DatabaseService {
     return _firestore.collection('subjects')
         .orderBy('createdAt', descending: false)
         .snapshots()
-        .map((snapshot) => snapshot.docs.map((doc) => Subject.fromJson({
-          ...doc.data(),
-          'id': doc.id,
-        })).toList());
+        .map((snapshot) => snapshot.docs.map((doc) {
+          try {
+            return Subject.fromJson({
+              ...doc.data(),
+              'id': doc.id,
+            });
+          } catch (e) {
+            print('Error parsing subject ${doc.id}: $e');
+            // Return a fallback subject with current timestamp
+            return Subject(
+              id: doc.id,
+              name: doc.data()['name'] ?? 'Unknown Subject',
+              color: const Color(0xFF26C6DA),
+              description: doc.data()['description'],
+              createdAt: DateTime.now(),
+            );
+          }
+        }).toList())
+        .handleError((error) {
+          print('Error in subjects stream: $error');
+          return <Subject>[];
+        });
   }
 
   Future<void> addSubject(Subject subject) async {
+    if (!isUserAuthenticated) return;
+    
     try {
       await _firestore.collection('subjects').doc(subject.id).set({
         ...subject.toJson(),
+        'userId': currentUserId,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -111,8 +137,11 @@ class DatabaseService {
 
   // Tasks
   Future<List<Task>> getTasks() async {
+    if (!isUserAuthenticated) return [];
+    
     try {
       final snapshot = await _firestore.collection('tasks')
+          .where('userId', isEqualTo: currentUserId)
           .orderBy('createdAt', descending: true)
           .get(GetOptions(source: _isOnline ? Source.serverAndCache : Source.cache));
       return snapshot.docs.map((doc) => Task.fromJson({
@@ -126,7 +155,12 @@ class DatabaseService {
   }
 
   Stream<List<Task>> getTasksStream() {
+    if (!isUserAuthenticated) {
+      return Stream.value([]);
+    }
+    
     return _firestore.collection('tasks')
+        .where('userId', isEqualTo: currentUserId)
         .orderBy('createdAt', descending: true)
         .snapshots()
         .map((snapshot) => snapshot.docs.map((doc) => Task.fromJson({
@@ -137,7 +171,12 @@ class DatabaseService {
 
   // Получение задач по предмету
   Stream<List<Task>> getTasksBySubjectStream(String subjectId) {
+    if (!isUserAuthenticated) {
+      return Stream.value([]);
+    }
+    
     return _firestore.collection('tasks')
+        .where('userId', isEqualTo: currentUserId)
         .where('subjectId', isEqualTo: subjectId)
         .orderBy('deadline', descending: false)
         .snapshots()
@@ -149,7 +188,12 @@ class DatabaseService {
 
   // Получение задач по статусу
   Stream<List<Task>> getTasksByStatusStream(TaskStatus status) {
+    if (!isUserAuthenticated) {
+      return Stream.value([]);
+    }
+    
     return _firestore.collection('tasks')
+        .where('userId', isEqualTo: currentUserId)
         .where('status', isEqualTo: status.index)
         .orderBy('deadline', descending: false)
         .snapshots()
@@ -160,9 +204,12 @@ class DatabaseService {
   }
 
   Future<void> addTask(Task task) async {
+    if (!isUserAuthenticated) return;
+    
     try {
       await _firestore.collection('tasks').doc(task.id).set({
         ...task.toJson(),
+        'userId': currentUserId,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
       });
@@ -173,6 +220,8 @@ class DatabaseService {
   }
 
   Future<void> updateTask(Task task) async {
+    if (!isUserAuthenticated) return;
+    
     try {
       await _firestore.collection('tasks').doc(task.id).update({
         ...task.toJson(),
@@ -185,6 +234,8 @@ class DatabaseService {
   }
 
   Future<void> deleteTask(String id) async {
+    if (!isUserAuthenticated) return;
+    
     try {
       await _firestore.collection('tasks').doc(id).delete();
     } catch (e) {
@@ -195,6 +246,8 @@ class DatabaseService {
 
   // Массовые операции
   Future<void> markMultipleTasksCompleted(List<String> taskIds) async {
+    if (!isUserAuthenticated) return;
+    
     try {
       final batch = _firestore.batch();
       
@@ -214,6 +267,8 @@ class DatabaseService {
   }
 
   Future<void> deleteMultipleTasks(List<String> taskIds) async {
+    if (!isUserAuthenticated) return;
+    
     try {
       final batch = _firestore.batch();
       
@@ -231,8 +286,19 @@ class DatabaseService {
 
   // Аналитика
   Future<Map<String, int>> getTasksAnalytics() async {
+    if (!isUserAuthenticated) {
+      return {
+        'total': 0,
+        'completed': 0,
+        'pending': 0,
+        'overdue': 0,
+      };
+    }
+    
     try {
-      final snapshot = await _firestore.collection('tasks').get();
+      final snapshot = await _firestore.collection('tasks')
+          .where('userId', isEqualTo: currentUserId)
+          .get();
       
       int total = snapshot.docs.length;
       int completed = 0;
@@ -281,9 +347,17 @@ class DatabaseService {
   }
 
   Future<Map<String, int>> getTasksBySubjectAnalytics() async {
+    if (!isUserAuthenticated) {
+      return {};
+    }
+    
     try {
-      final tasksSnapshot = await _firestore.collection('tasks').get();
-      final subjectsSnapshot = await _firestore.collection('subjects').get();
+      final tasksSnapshot = await _firestore.collection('tasks')
+          .where('userId', isEqualTo: currentUserId)
+          .get();
+      final subjectsSnapshot = await _firestore.collection('subjects')
+          .where('userId', isEqualTo: currentUserId)
+          .get();
       
       final Map<String, int> result = {};
       final Map<String, String> subjectNames = {};
@@ -312,6 +386,118 @@ class DatabaseService {
 
   // Статус подключения
   bool get isOnline => _isOnline;
+
+  // === USER PROFILE METHODS ===
+
+  String? _currentUserId;
+
+  void setCurrentUser(String? userId) {
+    _currentUserId = userId;
+  }
+
+  String get currentUserId => _currentUserId ?? '';
+
+  bool get isUserAuthenticated => _currentUserId != null;
+
+  // Сохранение/обновление профиля пользователя
+  Future<void> saveUserProfile(UserProfile profile) async {
+    try {
+      await _firestore
+          .collection('users')
+          .doc(profile.uid)
+          .set(profile.toJson(), SetOptions(merge: true));
+      print('User profile saved: ${profile.uid}');
+    } catch (e) {
+      print('Error saving user profile: $e');
+      throw e;
+    }
+  }
+
+  // Получение профиля пользователя
+  Future<UserProfile?> getUserProfile(String userId) async {
+    try {
+      final doc = await _firestore.collection('users').doc(userId).get();
+      if (doc.exists) {
+        return UserProfile.fromJson({
+          ...doc.data()!,
+          'uid': doc.id,
+        });
+      }
+      return null;
+    } catch (e) {
+      print('Error getting user profile: $e');
+      return null;
+    }
+  }
+
+  // Получение статистики пользователя
+  Future<Map<String, int>> getUserStats(String userId) async {
+    try {
+      final tasksSnapshot = await _firestore
+          .collection('tasks')
+          .where('userId', isEqualTo: userId)
+          .get();
+
+      final subjectsSnapshot = await _firestore
+          .collection('subjects')
+          .where('userId', isEqualTo: userId)
+          .get();
+
+      final totalTasks = tasksSnapshot.docs.length;
+      final completedTasks = tasksSnapshot.docs
+          .where((doc) => doc.data()['status'] == TaskStatus.completed.index)
+          .length;
+
+      return {
+        'totalTasks': totalTasks,
+        'completedTasks': completedTasks,
+        'totalSubjects': subjectsSnapshot.docs.length,
+      };
+    } catch (e) {
+      print('Error getting user stats: $e');
+      return {
+        'totalTasks': 0,
+        'completedTasks': 0,
+        'totalSubjects': 0,
+      };
+    }
+  }
+
+  // Удаление всех данных пользователя
+  Future<void> deleteUserData(String userId) async {
+    try {
+      final batch = _firestore.batch();
+
+      // Удаляем профиль
+      batch.delete(_firestore.collection('users').doc(userId));
+
+      // Удаляем задачи
+      final tasksSnapshot = await _firestore
+          .collection('tasks')
+          .where('userId', isEqualTo: userId)
+          .get();
+      
+      for (final doc in tasksSnapshot.docs) {
+        batch.delete(doc.reference);
+      }
+
+      // Удаляем предметы
+      final subjectsSnapshot = await _firestore
+          .collection('subjects')
+          .where('userId', isEqualTo: userId)
+          .get();
+      
+      for (final doc in subjectsSnapshot.docs) {
+        batch.delete(doc.reference);
+      }
+
+      await batch.commit();
+      print('User data deleted: $userId');
+    } catch (e) {
+      print('Error deleting user data: $e');
+      throw e;
+    }
+  }
 
   // Очистка ресурсов
   void dispose() {

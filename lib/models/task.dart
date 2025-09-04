@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 enum TaskPriority { low, medium, high }
 enum TaskStatus { pending, completed, overdue }
 
@@ -62,12 +64,23 @@ class Task {
     subjectId: json['subjectId'],
     title: json['title'],
     description: json['description'],
-    deadline: DateTime.fromMillisecondsSinceEpoch(json['deadline']),
+    deadline: _parseDateTime(json['deadline']),
     plannedTime: json['plannedTime'] != null 
-        ? DateTime.fromMillisecondsSinceEpoch(json['plannedTime'])
+        ? _parseDateTime(json['plannedTime'])
         : null,
     priority: TaskPriority.values[json['priority'] ?? 1],
     status: TaskStatus.values[json['status'] ?? 0],
-    createdAt: DateTime.fromMillisecondsSinceEpoch(json['createdAt']),
+    createdAt: _parseDateTime(json['createdAt']),
   );
+
+  static DateTime _parseDateTime(dynamic dateTime) {
+    if (dateTime is Timestamp) {
+      return dateTime.toDate();
+    } else if (dateTime is int) {
+      return DateTime.fromMillisecondsSinceEpoch(dateTime);
+    } else if (dateTime is String) {
+      return DateTime.parse(dateTime);
+    }
+    return DateTime.now();
+  }
 }

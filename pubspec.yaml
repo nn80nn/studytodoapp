@@ -25,6 +25,7 @@ dependencies:
   firebase_core: ^2.24.2
   cloud_firestore: ^4.13.6
   firebase_auth: ^4.15.3
+  google_sign_in: ^6.1.6
   
   # Локальные уведомления - временно отключены
   # flutter_local_notifications: ^16.3.2
