@@ -16,6 +16,29 @@ class AuthInitialize extends AuthEvent {}
 
 class AuthSignInWithGoogle extends AuthEvent {}
 
+class AuthSignInWithEmailPassword extends AuthEvent {
+  final String email;
+  final String password;
+  AuthSignInWithEmailPassword(this.email, this.password);
+  @override
+  List<Object?> get props => [email, password];
+}
+
+class AuthCreateUserWithEmailPassword extends AuthEvent {
+  final String email;
+  final String password;
+  AuthCreateUserWithEmailPassword(this.email, this.password);
+  @override
+  List<Object?> get props => [email, password];
+}
+
+class AuthResetPassword extends AuthEvent {
+  final String email;
+  AuthResetPassword(this.email);
+  @override
+  List<Object?> get props => [email];
+}
+
 class AuthSignInAnonymously extends AuthEvent {}
 
 class AuthSignOut extends AuthEvent {}
@@ -65,6 +88,9 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
   AuthBloc() : super(AuthInitial()) {
     on<AuthInitialize>(_onInitialize);
     on<AuthSignInWithGoogle>(_onSignInWithGoogle);
+    on<AuthSignInWithEmailPassword>(_onSignInWithEmailPassword);
+    on<AuthCreateUserWithEmailPassword>(_onCreateUserWithEmailPassword);
+    on<AuthResetPassword>(_onResetPassword);
     on<AuthSignInAnonymously>(_onSignInAnonymously);
     on<AuthSignOut>(_onSignOut);
     on<AuthDeleteAccount>(_onDeleteAccount);
@@ -103,6 +129,36 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     }
   }
 
+  Future<void> _onSignInWithEmailPassword(AuthSignInWithEmailPassword event, Emitter<AuthState> emit) async {
+    emit(AuthLoading());
+    try {
+      await _authService.signInWithEmailAndPassword(event.email, event.password);
+      // AuthUserChanged будет вызван автоматически через stream
+    } catch (e) {
+      emit(AuthError(e.toString()));
+    }
+  }
+
+  Future<void> _onCreateUserWithEmailPassword(AuthCreateUserWithEmailPassword event, Emitter<AuthState> emit) async {
+    emit(AuthLoading());
+    try {
+      await _authService.createUserWithEmailAndPassword(event.email, event.password);
+      // AuthUserChanged будет вызван автоматически через stream
+    } catch (e) {
+      emit(AuthError(e.toString()));
+    }
+  }
+
+  Future<void> _onResetPassword(AuthResetPassword event, Emitter<AuthState> emit) async {
+    emit(AuthLoading());
+    try {
+      await _authService.resetPassword(event.email);
+      emit(AuthUnauthenticated());
+    } catch (e) {
+      emit(AuthError(e.toString()));
+    }
+  }
+
   Future<void> _onSignInAnonymously(AuthSignInAnonymously event, Emitter<AuthState> emit) async {
     emit(AuthLoading());
     try {
@@ -128,15 +184,23 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     try {
       final currentState = state;
       if (currentState is AuthAuthenticated) {
-        // Удаляем данные пользователя из Firestore
-        await _databaseService.deleteUserData(currentState.userProfile.uid);
+        // Пытаемся удалить данные пользователя из Firestore с таймаутом
+        try {
+          await _databaseService.deleteUserData(currentState.userProfile.uid)
+              .timeout(const Duration(seconds: 10));
+        } catch (e) {
+          // Если не удается удалить данные из Firestore, продолжаем удаление аккаунта
+          print('Не удалось удалить данные пользователя из Firestore: $e');
+        }
         
-        // Удаляем аккаунт
-        await _authService.deleteAccount();
+        // Удаляем аккаунт Firebase с таймаутом
+        await _authService.deleteAccount()
+            .timeout(const Duration(seconds: 10));
       }
       // AuthUserChanged будет вызван автоматически через stream
     } catch (e) {
-      emit(AuthError(e.toString()));
+      print('Ошибка удаления аккаунта: $e');
+      emit(AuthError('Ошибка при удалении аккаунта: ${e.toString()}'));
     }
   }
 

@@ -55,6 +55,47 @@ class AuthService {
     }
   }
 
+  // Вход через email и пароль
+  Future<UserCredential?> signInWithEmailAndPassword(String email, String password) async {
+    try {
+      final UserCredential userCredential = await _auth.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      print('Пользователь вошел через email: ${userCredential.user?.email}');
+      return userCredential;
+    } catch (e) {
+      print('Ошибка входа через email: $e');
+      throw e;
+    }
+  }
+
+  // Регистрация через email и пароль
+  Future<UserCredential?> createUserWithEmailAndPassword(String email, String password) async {
+    try {
+      final UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+      print('Пользователь зарегистрирован: ${userCredential.user?.email}');
+      return userCredential;
+    } catch (e) {
+      print('Ошибка регистрации: $e');
+      throw e;
+    }
+  }
+
+  // Сброс пароля
+  Future<void> resetPassword(String email) async {
+    try {
+      await _auth.sendPasswordResetEmail(email: email);
+      print('Email для сброса пароля отправлен');
+    } catch (e) {
+      print('Ошибка сброса пароля: $e');
+      throw e;
+    }
+  }
+
   // Анонимный вход
   Future<UserCredential?> signInAnonymously() async {
     try {

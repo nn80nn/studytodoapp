@@ -46,11 +46,31 @@ class DatabaseService {
     if (!isUserAuthenticated) return [];
     
     try {
-      final snapshot = await _firestore.collection('subjects')
+      // Сначала пробуем загрузить из кеша
+      try {
+        final cacheSnapshot = await _firestore.collection('subjects')
+            .where('userId', isEqualTo: currentUserId)
+            .orderBy('createdAt', descending: false)
+            .get(GetOptions(source: Source.cache));
+        
+        if (cacheSnapshot.docs.isNotEmpty) {
+          return cacheSnapshot.docs.map((doc) => Subject.fromJson({
+            ...doc.data(),
+            'id': doc.id,
+          })).toList();
+        }
+      } catch (e) {
+        print('Cache not available: $e');
+      }
+      
+      // Если нет кеша, пробуем сервер с таймаутом
+      final serverSnapshot = await _firestore.collection('subjects')
           .where('userId', isEqualTo: currentUserId)
           .orderBy('createdAt', descending: false)
-          .get(GetOptions(source: _isOnline ? Source.serverAndCache : Source.cache));
-      return snapshot.docs.map((doc) => Subject.fromJson({
+          .get(GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 5));
+      
+      return serverSnapshot.docs.map((doc) => Subject.fromJson({
         ...doc.data(),
         'id': doc.id,
       })).toList();
@@ -61,7 +81,12 @@ class DatabaseService {
   }
 
   Stream<List<Subject>> getSubjectsStream() {
+    if (!isUserAuthenticated) {
+      return Stream.value([]);
+    }
+    
     return _firestore.collection('subjects')
+        .where('userId', isEqualTo: currentUserId)
         .orderBy('createdAt', descending: false)
         .snapshots()
         .map((snapshot) => snapshot.docs.map((doc) {
@@ -97,9 +122,21 @@ class DatabaseService {
         'userId': currentUserId,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
-      });
+      }).timeout(const Duration(seconds: 10));
     } catch (e) {
       print('Error adding subject: $e');
+      // В случае ошибки, все равно сохраняем в кеше для оффлайн поддержки
+      try {
+        await _firestore.collection('subjects').doc(subject.id).set({
+          ...subject.toJson(),
+          'userId': currentUserId,
+          'createdAt': DateTime.now().millisecondsSinceEpoch,
+          'updatedAt': DateTime.now().millisecondsSinceEpoch,
+        }, SetOptions(merge: true));
+      } catch (_) {
+        // Если и это не работает, просто логируем
+        print('Failed to cache subject offline');
+      }
       rethrow;
     }
   }
@@ -140,11 +177,31 @@ class DatabaseService {
     if (!isUserAuthenticated) return [];
     
     try {
-      final snapshot = await _firestore.collection('tasks')
+      // Сначала пробуем загрузить из кеша
+      try {
+        final cacheSnapshot = await _firestore.collection('tasks')
+            .where('userId', isEqualTo: currentUserId)
+            .orderBy('createdAt', descending: true)
+            .get(GetOptions(source: Source.cache));
+        
+        if (cacheSnapshot.docs.isNotEmpty) {
+          return cacheSnapshot.docs.map((doc) => Task.fromJson({
+            ...doc.data(),
+            'id': doc.id,
+          })).toList();
+        }
+      } catch (e) {
+        print('Cache not available: $e');
+      }
+      
+      // Если нет кеша, пробуем сервер с таймаутом
+      final serverSnapshot = await _firestore.collection('tasks')
           .where('userId', isEqualTo: currentUserId)
           .orderBy('createdAt', descending: true)
-          .get(GetOptions(source: _isOnline ? Source.serverAndCache : Source.cache));
-      return snapshot.docs.map((doc) => Task.fromJson({
+          .get(GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 5));
+      
+      return serverSnapshot.docs.map((doc) => Task.fromJson({
         ...doc.data(),
         'id': doc.id,
       })).toList();

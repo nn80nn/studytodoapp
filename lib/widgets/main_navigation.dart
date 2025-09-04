@@ -34,9 +34,9 @@ class _MainNavigationState extends State<MainNavigation> {
       label: 'Предметы',
     ),
     const NavigationDestination(
-      icon: Icon(Icons.analytics_outlined),
-      selectedIcon: Icon(Icons.analytics),
-      label: 'Аналитика',
+      icon: Icon(Icons.person_outlined),
+      selectedIcon: Icon(Icons.person),
+      label: 'Профиль',
     ),
   ];
 

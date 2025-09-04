@@ -352,7 +352,30 @@ class AnalyticsScreen extends StatelessWidget {
                 ),
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+            ElevatedButton.icon(
+              onPressed: () {
+                _showEmailPasswordDialog(context, false);
+              },
+              icon: const Icon(Icons.email),
+              label: const Text('Войти с email'),
+              style: ElevatedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
+                backgroundColor: Theme.of(context).colorScheme.secondary,
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextButton.icon(
+              onPressed: () {
+                _showEmailPasswordDialog(context, true);
+              },
+              icon: const Icon(Icons.person_add),
+              label: const Text('Регистрация'),
+            ),
+            const SizedBox(height: 8),
             TextButton.icon(
               onPressed: () {
                 context.read<AuthBloc>().add(AuthSignInAnonymously());
@@ -383,12 +406,166 @@ class AnalyticsScreen extends StatelessWidget {
             onPressed: () {
               Navigator.of(context).pop();
               context.read<AuthBloc>().add(AuthDeleteAccount());
+              
+              // Показываем уведомление о процессе удаления
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Удаление аккаунта... Пожалуйста, подождите.'),
+                  duration: Duration(seconds: 3),
+                ),
+              );
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.red,
               foregroundColor: Colors.white,
             ),
             child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showEmailPasswordDialog(BuildContext context, bool isRegistration) {
+    final emailController = TextEditingController();
+    final passwordController = TextEditingController();
+    final GlobalKey<FormState> formKey = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(isRegistration ? 'Регистрация' : 'Вход в систему'),
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextFormField(
+                controller: emailController,
+                decoration: const InputDecoration(
+                  labelText: 'Email',
+                  prefixIcon: Icon(Icons.email),
+                ),
+                keyboardType: TextInputType.emailAddress,
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Введите email';
+                  }
+                  if (!value.contains('@')) {
+                    return 'Введите корректный email';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: passwordController,
+                decoration: const InputDecoration(
+                  labelText: 'Пароль',
+                  prefixIcon: Icon(Icons.lock),
+                ),
+                obscureText: true,
+                validator: (value) {
+                  if (value == null || value.isEmpty) {
+                    return 'Введите пароль';
+                  }
+                  if (value.length < 6) {
+                    return 'Пароль должен содержать минимум 6 символов';
+                  }
+                  return null;
+                },
+              ),
+              if (!isRegistration) ...[
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () {
+                    Navigator.of(context).pop();
+                    _showResetPasswordDialog(context);
+                  },
+                  child: const Text('Забыли пароль?'),
+                ),
+              ],
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Отмена'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (formKey.currentState?.validate() ?? false) {
+                Navigator.of(context).pop();
+                if (isRegistration) {
+                  context.read<AuthBloc>().add(AuthCreateUserWithEmailPassword(
+                    emailController.text.trim(),
+                    passwordController.text,
+                  ));
+                } else {
+                  context.read<AuthBloc>().add(AuthSignInWithEmailPassword(
+                    emailController.text.trim(),
+                    passwordController.text,
+                  ));
+                }
+              }
+            },
+            child: Text(isRegistration ? 'Зарегистрироваться' : 'Войти'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showResetPasswordDialog(BuildContext context) {
+    final emailController = TextEditingController();
+    final GlobalKey<FormState> formKey = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Сброс пароля'),
+        content: Form(
+          key: formKey,
+          child: TextFormField(
+            controller: emailController,
+            decoration: const InputDecoration(
+              labelText: 'Email',
+              prefixIcon: Icon(Icons.email),
+              helperText: 'Мы отправим ссылку для сброса пароля на ваш email',
+            ),
+            keyboardType: TextInputType.emailAddress,
+            validator: (value) {
+              if (value == null || value.isEmpty) {
+                return 'Введите email';
+              }
+              if (!value.contains('@')) {
+                return 'Введите корректный email';
+              }
+              return null;
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Отмена'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              if (formKey.currentState?.validate() ?? false) {
+                Navigator.of(context).pop();
+                context.read<AuthBloc>().add(AuthResetPassword(
+                  emailController.text.trim(),
+                ));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('Ссылка для сброса пароля отправлена на email'),
+                  ),
+                );
+              }
+            },
+            child: const Text('Отправить'),
           ),
         ],
       ),
