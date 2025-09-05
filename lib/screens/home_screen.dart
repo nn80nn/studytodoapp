@@ -324,7 +324,7 @@ class _AddTaskDialogState extends State<_AddTaskDialog> {
                   context: context,
                   initialDate: _deadline,
                   firstDate: DateTime.now(),
-                  lastDate: DateTime.now().add(const Duration(days: 365)),
+                  lastDate: DateTime(2100, 12, 31),
                 );
                 if (date != null) {
                   setState(() => _deadline = date);

@@ -617,7 +617,11 @@ class AnalyticsScreen extends StatelessWidget {
     final now = DateTime.now();
     final difference = now.difference(date);
 
-    if (difference.inDays > 30) {
+    // Проверка на очень большие разницы для предотвращения переполнения
+    if (difference.inDays > 365) {
+      final yearsDiff = (difference.inDays / 365).floor();
+      return yearsDiff == 1 ? '1 год назад' : '$yearsDiff лет назад';
+    } else if (difference.inDays > 30) {
       return '${date.day}.${date.month}.${date.year}';
     } else if (difference.inDays > 0) {
       return '${difference.inDays} дн. назад';

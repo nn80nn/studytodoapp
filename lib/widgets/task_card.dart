@@ -270,9 +270,17 @@ class TaskCard extends StatelessWidget {
       return 'Завтра';
     } else if (taskDate.isBefore(today)) {
       final daysDiff = today.difference(taskDate).inDays;
+      if (daysDiff > 365) {
+        final yearsDiff = (daysDiff / 365).floor();
+        return yearsDiff == 1 ? '1 год назад' : '$yearsDiff лет назад';
+      }
       return '$daysDiff дн. назад';
     } else {
       final daysDiff = taskDate.difference(today).inDays;
+      if (daysDiff > 365) {
+        final yearsDiff = (daysDiff / 365).floor();
+        return yearsDiff == 1 ? 'Через 1 год' : 'Через $yearsDiff лет';
+      }
       return 'Через $daysDiff дн.';
     }
   }

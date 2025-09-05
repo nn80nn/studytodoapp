@@ -74,12 +74,21 @@ class Task {
   );
 
   static DateTime _parseDateTime(dynamic dateTime) {
-    if (dateTime is Timestamp) {
-      return dateTime.toDate();
-    } else if (dateTime is int) {
-      return DateTime.fromMillisecondsSinceEpoch(dateTime);
-    } else if (dateTime is String) {
-      return DateTime.parse(dateTime);
+    try {
+      if (dateTime is Timestamp) {
+        return dateTime.toDate();
+      } else if (dateTime is int) {
+        // Проверка на разумные границы для предотвращения переполнения
+        if (dateTime < 0 || dateTime > 4102444800000) { // 1 января 2100
+          return DateTime.now();
+        }
+        return DateTime.fromMillisecondsSinceEpoch(dateTime);
+      } else if (dateTime is String) {
+        return DateTime.parse(dateTime);
+      }
+    } catch (e) {
+      // В случае ошибки парсинга возвращаем текущее время
+      return DateTime.now();
     }
     return DateTime.now();
   }
