@@ -48,6 +48,8 @@ class UnCompleteTask extends TasksEvent {
   List<Object> get props => [id];
 }
 
+class DeleteCompletedTasks extends TasksEvent {}
+
 class StartTasksStream extends TasksEvent {}
 class StopTasksStream extends TasksEvent {}
 class TasksUpdated extends TasksEvent {
@@ -99,6 +101,7 @@ class TasksBloc extends Bloc<TasksEvent, TasksState> {
     on<DeleteTask>(_onDeleteTask);
     on<CompleteTask>(_onCompleteTask);
     on<UnCompleteTask>(_onUnCompleteTask);
+    on<DeleteCompletedTasks>(_onDeleteCompletedTasks);
     on<StartTasksStream>(_onStartTasksStream);
     on<StopTasksStream>(_onStopTasksStream);
     on<TasksUpdated>(_onTasksUpdated);
@@ -257,6 +260,42 @@ class TasksBloc extends Bloc<TasksEvent, TasksState> {
         emit(TasksLoaded(currentState.tasks));
       }
       emit(TasksError(e.toString()));
+    }
+  }
+
+  Future<void> _onDeleteCompletedTasks(DeleteCompletedTasks event, Emitter<TasksState> emit) async {
+    final currentState = state;
+    List<Task> completedTasks = [];
+    
+    if (currentState is TasksLoaded) {
+      // Найдем все выполненные задачи
+      completedTasks = currentState.tasks.where((task) => task.status == TaskStatus.completed).toList();
+      
+      if (completedTasks.isEmpty) {
+        // Если нет выполненных задач, показываем сообщение
+        return;
+      }
+      
+      // Оптимистичное обновление - удаляем выполненные задачи из UI
+      final remainingTasks = currentState.tasks.where((task) => task.status != TaskStatus.completed).toList();
+      emit(TasksLoaded(remainingTasks));
+    }
+    
+    try {
+      // Удаляем выполненные задачи из базы данных
+      for (final task in completedTasks) {
+        await _databaseService.deleteTask(task.id);
+      }
+      
+      // Загружаем обновленный список задач
+      final tasks = await _databaseService.getTasks();
+      emit(TasksLoaded(tasks));
+    } catch (e) {
+      // В случае ошибки возвращаем предыдущее состояние
+      if (currentState is TasksLoaded) {
+        emit(TasksLoaded(currentState.tasks));
+      }
+      emit(TasksError('Ошибка при удалении выполненных задач: ${e.toString()}'));
     }
   }
 

@@ -7,7 +7,7 @@ import '../models/task.dart';
 import '../models/user_profile.dart';
 
 class AnalyticsScreen extends StatelessWidget {
-  const AnalyticsScreen({Key? key}) : super(key: key);
+  const AnalyticsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -132,7 +132,7 @@ class AnalyticsScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
+            const Text(
               'Общая статистика',
               style: TextStyle(
                 fontSize: 18,
@@ -183,7 +183,7 @@ class AnalyticsScreen extends StatelessWidget {
           ),
           Text(
             value.toString(),
-            style: TextStyle(
+            style: const TextStyle(
               fontWeight: FontWeight.bold,
               fontSize: 16,
             ),
@@ -208,7 +208,7 @@ class AnalyticsScreen extends StatelessWidget {
                     ? NetworkImage(profile.photoURL!)
                     : null,
                   child: !profile.hasProfileImage 
-                    ? Icon(Icons.person, size: 30)
+                    ? const Icon(Icons.person, size: 30)
                     : null,
                 ),
                 const SizedBox(width: 16),

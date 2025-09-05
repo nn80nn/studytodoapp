@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../blocs/subjects_bloc.dart';
+import '../blocs/auth_bloc.dart';
 import '../models/subject.dart';
+import '../services/ai_service.dart';
 
 class SubjectsScreen extends StatelessWidget {
-  const SubjectsScreen({Key? key}) : super(key: key);
+  const SubjectsScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -190,7 +192,7 @@ class SubjectsScreen extends StatelessWidget {
 class _AddEditSubjectDialog extends StatefulWidget {
   final Subject? subject;
   
-  const _AddEditSubjectDialog({Key? key, this.subject}) : super(key: key);
+  const _AddEditSubjectDialog({this.subject});
 
   @override
   _AddEditSubjectDialogState createState() => _AddEditSubjectDialogState();
@@ -200,6 +202,9 @@ class _AddEditSubjectDialogState extends State<_AddEditSubjectDialog> {
   final _nameController = TextEditingController();
   final _descriptionController = TextEditingController();
   late Color _selectedColor;
+  bool _isImproving = false;
+  bool _hasApiKey = false;
+  String? _apiKey;
 
   @override
   void initState() {
@@ -210,6 +215,16 @@ class _AddEditSubjectDialogState extends State<_AddEditSubjectDialog> {
       _selectedColor = widget.subject!.color;
     } else {
       _selectedColor = const Color(0xFF26C6DA);
+    }
+    _checkApiKey();
+  }
+
+  void _checkApiKey() {
+    final authBloc = context.read<AuthBloc>();
+    final authState = authBloc.state;
+    if (authState is AuthAuthenticated && authState.userProfile.hasGeminiApiKey) {
+      _hasApiKey = true;
+      _apiKey = authState.userProfile.geminiApiKey;
     }
   }
 
@@ -264,8 +279,27 @@ class _AddEditSubjectDialogState extends State<_AddEditSubjectDialog> {
             const SizedBox(height: 16),
             TextField(
               controller: _descriptionController,
-              decoration: const InputDecoration(labelText: 'Описание (необязательно)'),
+              decoration: InputDecoration(
+                labelText: 'Описание (необязательно)',
+                suffixIcon: _hasApiKey
+                    ? (_isImproving
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: Padding(
+                              padding: EdgeInsets.all(12.0),
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : IconButton(
+                            icon: const Icon(Icons.auto_fix_high),
+                            onPressed: _canImprove() ? _improveDescription : null,
+                            tooltip: 'Улучшить с помощью AI',
+                          ))
+                    : null,
+              ),
               maxLines: 3,
+              onChanged: (value) => setState(() {}), // Trigger rebuild for button state
             ),
             const SizedBox(height: 16),
             const Text('Выберите цвет:'),
@@ -369,6 +403,43 @@ class _AddEditSubjectDialogState extends State<_AddEditSubjectDialog> {
         ),
       ],
     );
+  }
+
+  bool _canImprove() {
+    return _descriptionController.text.trim().isNotEmpty &&
+           _nameController.text.trim().isNotEmpty &&
+           !_isImproving;
+  }
+
+  Future<void> _improveDescription() async {
+    if (!_canImprove() || _apiKey == null) return;
+    
+    setState(() => _isImproving = true);
+    
+    try {
+      AIService().initialize(_apiKey!);
+      final improvedDescription = await AIService().improveSubjectDescription(
+        _descriptionController.text.trim(),
+        _nameController.text.trim(),
+      );
+      
+      if (mounted) {
+        setState(() {
+          _descriptionController.text = improvedDescription;
+          _isImproving = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isImproving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Ошибка улучшения описания: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override

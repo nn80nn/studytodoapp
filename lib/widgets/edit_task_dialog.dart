@@ -12,10 +12,10 @@ class EditTaskDialog extends StatefulWidget {
   final Subject subject;
 
   const EditTaskDialog({
-    Key? key,
+    super.key,
     required this.task,
     required this.subject,
-  }) : super(key: key);
+  });
 
   @override
   EditTaskDialogState createState() => EditTaskDialogState();
@@ -28,6 +28,8 @@ class EditTaskDialogState extends State<EditTaskDialog> {
   late TaskPriority _priority;
   Subject? _selectedSubject;
   bool _isImproving = false;
+  bool _hasApiKey = false;
+  String? _apiKey;
 
   @override
   void initState() {
@@ -37,6 +39,16 @@ class EditTaskDialogState extends State<EditTaskDialog> {
     _deadline = widget.task.deadline;
     _priority = widget.task.priority;
     _selectedSubject = widget.subject;
+    _checkApiKey();
+  }
+
+  void _checkApiKey() {
+    final authBloc = context.read<AuthBloc>();
+    final authState = authBloc.state;
+    if (authState is AuthAuthenticated && authState.userProfile.hasGeminiApiKey) {
+      _hasApiKey = true;
+      _apiKey = authState.userProfile.geminiApiKey;
+    }
   }
 
   @override
@@ -56,31 +68,25 @@ class EditTaskDialogState extends State<EditTaskDialog> {
               controller: _descriptionController,
               decoration: InputDecoration(
                 labelText: 'Описание',
-                suffixIcon: BlocBuilder<AuthBloc, AuthState>(
-                  builder: (context, authState) {
-                    if (authState is AuthAuthenticated && 
-                        authState.userProfile.hasGeminiApiKey &&
-                        _descriptionController.text.isNotEmpty) {
-                      return _isImproving
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: Padding(
-                                padding: EdgeInsets.all(12.0),
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                            )
-                          : IconButton(
-                              icon: const Icon(Icons.auto_fix_high),
-                              onPressed: () => _improveDescription(authState.userProfile.geminiApiKey!),
-                              tooltip: 'Улучшить с помощью AI',
-                            );
-                    }
-                    return const SizedBox.shrink();
-                  },
-                ),
+                suffixIcon: _hasApiKey
+                    ? (_isImproving
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: Padding(
+                              padding: EdgeInsets.all(12.0),
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : IconButton(
+                            icon: const Icon(Icons.auto_fix_high),
+                            onPressed: _canImprove() ? _improveDescription : null,
+                            tooltip: 'Улучшить с помощью AI',
+                          ))
+                    : null,
               ),
               maxLines: 3,
+              onChanged: (value) => setState(() {}), // Trigger rebuild for button state
             ),
             const SizedBox(height: 16),
             BlocBuilder<SubjectsBloc, SubjectsState>(
@@ -226,14 +232,25 @@ class EditTaskDialogState extends State<EditTaskDialog> {
     }
   }
 
-  Future<void> _improveDescription(String apiKey) async {
-    if (_descriptionController.text.isEmpty || _isImproving) return;
+  bool _canImprove() {
+    return _descriptionController.text.trim().isNotEmpty &&
+           _titleController.text.trim().isNotEmpty &&
+           _selectedSubject != null &&
+           !_isImproving;
+  }
+
+  Future<void> _improveDescription() async {
+    if (!_canImprove() || _apiKey == null) return;
     
     setState(() => _isImproving = true);
     
     try {
-      AIService().initialize(apiKey);
-      final improvedDescription = await AIService().improveTaskDescription(_descriptionController.text);
+      AIService().initialize(_apiKey!);
+      final improvedDescription = await AIService().improveTaskDescription(
+        _descriptionController.text.trim(),
+        _titleController.text.trim(),
+        _selectedSubject!.name,
+      );
       
       if (mounted) {
         setState(() {

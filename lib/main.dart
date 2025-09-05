@@ -26,7 +26,7 @@ void main() async {
 }
 
 class StudyTodoApp extends StatelessWidget {
-  StudyTodoApp({Key? key}) : super(key: key);
+  StudyTodoApp({super.key});
   final GoRouter _router = GoRouter(
     routes: [
       GoRoute(

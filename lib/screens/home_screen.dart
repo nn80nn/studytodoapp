@@ -10,7 +10,7 @@ import '../widgets/task_group_card.dart';
 import '../services/ai_service.dart';
 
 class HomeScreen extends StatelessWidget {
-  const HomeScreen({Key? key}) : super(key: key);
+  const HomeScreen({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -18,6 +18,22 @@ class HomeScreen extends StatelessWidget {
       appBar: AppBar(
         title: const Text('StudyTodo'),
         actions: [
+          BlocBuilder<TasksBloc, TasksState>(
+            builder: (context, state) {
+              // Показываем кнопку только если есть выполненные задачи
+              final hasCompletedTasks = state is TasksLoaded && 
+                  state.tasks.any((task) => task.status == TaskStatus.completed);
+              
+              if (hasCompletedTasks) {
+                return IconButton(
+                  icon: const Icon(Icons.delete_sweep),
+                  onPressed: () => _showDeleteCompletedConfirmation(context),
+                  tooltip: 'Удалить все выполненные задачи',
+                );
+              }
+              return const SizedBox.shrink();
+            },
+          ),
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: () => context.read<TasksBloc>().add(RefreshTasks()),
@@ -161,11 +177,46 @@ class HomeScreen extends StatelessWidget {
       builder: (context) => const _AddTaskDialog(),
     );
   }
+
+  void _showDeleteCompletedConfirmation(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Удалить выполненные задачи?'),
+        content: const Text(
+          'Вы уверены, что хотите удалить все выполненные задачи? '
+          'Это действие нельзя отменить.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Отмена'),
+          ),
+          TextButton(
+            onPressed: () {
+              context.read<TasksBloc>().add(DeleteCompletedTasks());
+              Navigator.of(context).pop();
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(
+                  content: Text('Выполненные задачи удалены'),
+                  backgroundColor: Colors.green,
+                ),
+              );
+            },
+            style: TextButton.styleFrom(
+              foregroundColor: Colors.red,
+            ),
+            child: const Text('Удалить'),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 
 class _AddTaskDialog extends StatefulWidget {
-  const _AddTaskDialog({Key? key}) : super(key: key);
+  const _AddTaskDialog();
 
   @override
   _AddTaskDialogState createState() => _AddTaskDialogState();
@@ -178,6 +229,23 @@ class _AddTaskDialogState extends State<_AddTaskDialog> {
   TaskPriority _priority = TaskPriority.medium;
   Subject? _selectedSubject;
   bool _isImproving = false;
+  bool _hasApiKey = false;
+  String? _apiKey;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkApiKey();
+  }
+
+  void _checkApiKey() {
+    final authBloc = context.read<AuthBloc>();
+    final authState = authBloc.state;
+    if (authState is AuthAuthenticated && authState.userProfile.hasGeminiApiKey) {
+      _hasApiKey = true;
+      _apiKey = authState.userProfile.geminiApiKey;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -196,31 +264,25 @@ class _AddTaskDialogState extends State<_AddTaskDialog> {
               controller: _descriptionController,
               decoration: InputDecoration(
                 labelText: 'Описание',
-                suffixIcon: BlocBuilder<AuthBloc, AuthState>(
-                  builder: (context, authState) {
-                    if (authState is AuthAuthenticated && 
-                        authState.userProfile.hasGeminiApiKey &&
-                        _descriptionController.text.isNotEmpty) {
-                      return _isImproving
-                          ? const SizedBox(
-                              width: 20,
-                              height: 20,
-                              child: Padding(
-                                padding: EdgeInsets.all(12.0),
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              ),
-                            )
-                          : IconButton(
-                              icon: const Icon(Icons.auto_fix_high),
-                              onPressed: () => _improveDescription(authState.userProfile.geminiApiKey!),
-                              tooltip: 'Улучшить с помощью AI',
-                            );
-                    }
-                    return const SizedBox.shrink();
-                  },
-                ),
+                suffixIcon: _hasApiKey
+                    ? (_isImproving
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: Padding(
+                              padding: EdgeInsets.all(12.0),
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        : IconButton(
+                            icon: const Icon(Icons.auto_fix_high),
+                            onPressed: _canImprove() ? _improveDescription : null,
+                            tooltip: 'Улучшить с помощью AI',
+                          ))
+                    : null,
               ),
               maxLines: 3,
+              onChanged: (value) => setState(() {}), // Trigger rebuild for button state
             ),
             const SizedBox(height: 16),
             BlocBuilder<SubjectsBloc, SubjectsState>(
@@ -316,14 +378,25 @@ class _AddTaskDialogState extends State<_AddTaskDialog> {
     }
   }
 
-  Future<void> _improveDescription(String apiKey) async {
-    if (_descriptionController.text.isEmpty || _isImproving) return;
+  bool _canImprove() {
+    return _descriptionController.text.trim().isNotEmpty &&
+           _titleController.text.trim().isNotEmpty &&
+           _selectedSubject != null &&
+           !_isImproving;
+  }
+
+  Future<void> _improveDescription() async {
+    if (!_canImprove() || _apiKey == null) return;
     
     setState(() => _isImproving = true);
     
     try {
-      AIService().initialize(apiKey);
-      final improvedDescription = await AIService().improveTaskDescription(_descriptionController.text);
+      AIService().initialize(_apiKey!);
+      final improvedDescription = await AIService().improveTaskDescription(
+        _descriptionController.text.trim(),
+        _titleController.text.trim(),
+        _selectedSubject!.name,
+      );
       
       if (mounted) {
         setState(() {
