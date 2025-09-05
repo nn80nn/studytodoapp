@@ -5,6 +5,7 @@ import 'package:connectivity_plus/connectivity_plus.dart';
 import '../models/task.dart';
 import '../models/subject.dart';
 import '../models/user_profile.dart';
+import 'local_storage_service.dart';
 
 class DatabaseService {
   static final DatabaseService _instance = DatabaseService._internal();
@@ -12,6 +13,7 @@ class DatabaseService {
   DatabaseService._internal();
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  final LocalStorageService _localStorage = LocalStorageService();
   
   // Контроллеры для реал-тайм стримов
   StreamController<List<Task>>? _tasksStreamController;
@@ -21,11 +23,14 @@ class DatabaseService {
   
   // Статус подключения
   bool _isOnline = true;
+  bool _firebaseAvailable = false;
   StreamSubscription<ConnectivityResult>? _connectivitySubscription;
 
-  void initialize() {
+  Future<void> initialize() async {
+    await _localStorage.initialize();
     _setupConnectivityListener();
     _enableOfflineSupport();
+    _checkFirebaseAvailability();
   }
 
   void _setupConnectivityListener() {
@@ -35,61 +40,80 @@ class DatabaseService {
   }
 
   void _enableOfflineSupport() {
-    _firestore.settings = const Settings(
-      persistenceEnabled: true,
-      cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
-    );
+    try {
+      _firestore.settings = const Settings(
+        persistenceEnabled: true,
+        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+      );
+      _firebaseAvailable = true;
+    } catch (e) {
+      print('Firebase not available: $e');
+      _firebaseAvailable = false;
+    }
+  }
+
+  void _checkFirebaseAvailability() {
+    if (_firebaseAvailable && _isOnline) {
+      // Тестируем подключение к Firebase
+      _firestore.collection('test').limit(1).get(
+        GetOptions(source: Source.server)
+      ).timeout(const Duration(seconds: 5)).then((_) {
+        _firebaseAvailable = true;
+        print('Firebase available');
+      }).catchError((e) {
+        _firebaseAvailable = false;
+        print('Firebase not available: $e');
+      });
+    }
   }
 
   // Subjects
   Future<List<Subject>> getSubjects() async {
-    if (!isUserAuthenticated) return [];
+    // Всегда загружаем из локального хранилища сначала
+    List<Subject> localSubjects = await _localStorage.getSubjects(currentUserId);
     
-    try {
-      // Сначала пробуем загрузить из кеша
-      try {
-        final cacheSnapshot = await _firestore.collection('subjects')
-            .where('userId', isEqualTo: currentUserId)
-            .orderBy('createdAt', descending: false)
-            .get(GetOptions(source: Source.cache));
-        
-        if (cacheSnapshot.docs.isNotEmpty) {
-          return cacheSnapshot.docs.map((doc) => Subject.fromJson({
-            ...doc.data(),
-            'id': doc.id,
-          })).toList();
-        }
-      } catch (e) {
-        print('Cache not available: $e');
-      }
-      
-      // Если нет кеша, пробуем сервер с таймаутом
-      final serverSnapshot = await _firestore.collection('subjects')
-          .where('userId', isEqualTo: currentUserId)
-          .orderBy('createdAt', descending: false)
-          .get(GetOptions(source: Source.server))
-          .timeout(const Duration(seconds: 5));
-      
-      return serverSnapshot.docs.map((doc) => Subject.fromJson({
-        ...doc.data(),
-        'id': doc.id,
-      })).toList();
-    } catch (e) {
-      print('Error getting subjects: $e');
-      return [];
+    // Если Firebase доступен и пользователь авторизован, синхронизируем
+    if (_firebaseAvailable && isUserAuthenticated) {
+      _syncSubjectsFromFirebase();
     }
+    
+    return localSubjects;
   }
 
   Stream<List<Subject>> getSubjectsStream() {
-    if (!isUserAuthenticated) {
-      return Stream.value([]);
+    // Создаем стрим из локальных данных
+    _subjectsStreamController ??= StreamController<List<Subject>>.broadcast();
+    
+    // Загружаем и эмитим локальные данные сразу
+    _loadAndEmitSubjects();
+    
+    // Если Firebase доступен, подписываемся на обновления
+    if (_firebaseAvailable && isUserAuthenticated) {
+      _setupSubjectsFirebaseStream();
     }
     
-    return _firestore.collection('subjects')
+    return _subjectsStreamController!.stream;
+  }
+
+  void _loadAndEmitSubjects() async {
+    try {
+      final subjects = await _localStorage.getSubjects(currentUserId);
+      _subjectsStreamController?.add(subjects);
+    } catch (e) {
+      print('Error loading local subjects: $e');
+      _subjectsStreamController?.add([]);
+    }
+  }
+
+  void _setupSubjectsFirebaseStream() {
+    _subjectsSubscription?.cancel();
+    _subjectsSubscription = _firestore.collection('subjects')
         .where('userId', isEqualTo: currentUserId)
         .orderBy('createdAt', descending: false)
         .snapshots()
-        .map((snapshot) => snapshot.docs.map((doc) {
+        .listen((snapshot) async {
+      try {
+        final subjects = snapshot.docs.map((doc) {
           try {
             return Subject.fromJson({
               ...doc.data(),
@@ -97,7 +121,6 @@ class DatabaseService {
             });
           } catch (e) {
             print('Error parsing subject ${doc.id}: $e');
-            // Return a fallback subject with current timestamp
             return Subject(
               id: doc.id,
               name: doc.data()['name'] ?? 'Unknown Subject',
@@ -106,16 +129,58 @@ class DatabaseService {
               createdAt: DateTime.now(),
             );
           }
-        }).toList())
-        .handleError((error) {
-          print('Error in subjects stream: $error');
-          return <Subject>[];
-        });
+        }).toList();
+
+        // Сохраняем в локальное хранилище
+        await _localStorage.saveSubjects(subjects, currentUserId);
+        
+        // Эмитим обновленные данные
+        _subjectsStreamController?.add(subjects);
+      } catch (e) {
+        print('Error in subjects Firebase stream: $e');
+      }
+    }, onError: (error) {
+      print('Firebase subjects stream error: $error');
+      // При ошибке загружаем из локального хранилища
+      _loadAndEmitSubjects();
+    });
+  }
+
+  void _syncSubjectsFromFirebase() async {
+    if (!_firebaseAvailable || !isUserAuthenticated) return;
+    
+    try {
+      final snapshot = await _firestore.collection('subjects')
+          .where('userId', isEqualTo: currentUserId)
+          .orderBy('createdAt', descending: false)
+          .get(GetOptions(source: Source.server))
+          .timeout(const Duration(seconds: 5));
+      
+      final subjects = snapshot.docs.map((doc) => Subject.fromJson({
+        ...doc.data(),
+        'id': doc.id,
+      })).toList();
+
+      await _localStorage.saveSubjects(subjects, currentUserId);
+    } catch (e) {
+      print('Error syncing subjects from Firebase: $e');
+    }
   }
 
   Future<void> addSubject(Subject subject) async {
-    if (!isUserAuthenticated) return;
+    // Сохраняем в локальное хранилище сразу
+    await _localStorage.addSubject(subject, currentUserId);
     
+    // Эмитим обновленные данные
+    _loadAndEmitSubjects();
+    
+    // Если Firebase доступен и пользователь авторизован, синхронизируем
+    if (_firebaseAvailable && isUserAuthenticated) {
+      _syncSubjectToFirebase(subject);
+    }
+  }
+
+  void _syncSubjectToFirebase(Subject subject) async {
     try {
       await _firestore.collection('subjects').doc(subject.id).set({
         ...subject.toJson(),
@@ -124,20 +189,7 @@ class DatabaseService {
         'updatedAt': FieldValue.serverTimestamp(),
       }).timeout(const Duration(seconds: 10));
     } catch (e) {
-      print('Error adding subject: $e');
-      // В случае ошибки, все равно сохраняем в кеше для оффлайн поддержки
-      try {
-        await _firestore.collection('subjects').doc(subject.id).set({
-          ...subject.toJson(),
-          'userId': currentUserId,
-          'createdAt': DateTime.now().millisecondsSinceEpoch,
-          'updatedAt': DateTime.now().millisecondsSinceEpoch,
-        }, SetOptions(merge: true));
-      } catch (_) {
-        // Если и это не работает, просто логируем
-        print('Failed to cache subject offline');
-      }
-      rethrow;
+      print('Error syncing subject to Firebase: $e');
     }
   }
 
@@ -174,56 +226,89 @@ class DatabaseService {
 
   // Tasks
   Future<List<Task>> getTasks() async {
-    if (!isUserAuthenticated) return [];
+    // Всегда загружаем из локального хранилища сначала
+    List<Task> localTasks = await _localStorage.getTasks(currentUserId);
+    
+    // Если Firebase доступен и пользователь авторизован, синхронизируем
+    if (_firebaseAvailable && isUserAuthenticated) {
+      _syncTasksFromFirebase();
+    }
+    
+    return localTasks;
+  }
+
+  Stream<List<Task>> getTasksStream() {
+    // Создаем стрим из локальных данных
+    _tasksStreamController ??= StreamController<List<Task>>.broadcast();
+    
+    // Загружаем и эмитим локальные данные сразу
+    _loadAndEmitTasks();
+    
+    // Если Firebase доступен, подписываемся на обновления
+    if (_firebaseAvailable && isUserAuthenticated) {
+      _setupTasksFirebaseStream();
+    }
+    
+    return _tasksStreamController!.stream;
+  }
+
+  void _loadAndEmitTasks() async {
+    try {
+      final tasks = await _localStorage.getTasks(currentUserId);
+      _tasksStreamController?.add(tasks);
+    } catch (e) {
+      print('Error loading local tasks: $e');
+      _tasksStreamController?.add([]);
+    }
+  }
+
+  void _setupTasksFirebaseStream() {
+    _tasksSubscription?.cancel();
+    _tasksSubscription = _firestore.collection('tasks')
+        .where('userId', isEqualTo: currentUserId)
+        .orderBy('createdAt', descending: true)
+        .snapshots()
+        .listen((snapshot) async {
+      try {
+        final tasks = snapshot.docs.map((doc) => Task.fromJson({
+          ...doc.data(),
+          'id': doc.id,
+        })).toList();
+
+        // Сохраняем в локальное хранилище
+        await _localStorage.saveTasks(tasks, currentUserId);
+        
+        // Эмитим обновленные данные
+        _tasksStreamController?.add(tasks);
+      } catch (e) {
+        print('Error in tasks Firebase stream: $e');
+      }
+    }, onError: (error) {
+      print('Firebase tasks stream error: $error');
+      // При ошибке загружаем из локального хранилища
+      _loadAndEmitTasks();
+    });
+  }
+
+  void _syncTasksFromFirebase() async {
+    if (!_firebaseAvailable || !isUserAuthenticated) return;
     
     try {
-      // Сначала пробуем загрузить из кеша
-      try {
-        final cacheSnapshot = await _firestore.collection('tasks')
-            .where('userId', isEqualTo: currentUserId)
-            .orderBy('createdAt', descending: true)
-            .get(GetOptions(source: Source.cache));
-        
-        if (cacheSnapshot.docs.isNotEmpty) {
-          return cacheSnapshot.docs.map((doc) => Task.fromJson({
-            ...doc.data(),
-            'id': doc.id,
-          })).toList();
-        }
-      } catch (e) {
-        print('Cache not available: $e');
-      }
-      
-      // Если нет кеша, пробуем сервер с таймаутом
-      final serverSnapshot = await _firestore.collection('tasks')
+      final snapshot = await _firestore.collection('tasks')
           .where('userId', isEqualTo: currentUserId)
           .orderBy('createdAt', descending: true)
           .get(GetOptions(source: Source.server))
           .timeout(const Duration(seconds: 5));
       
-      return serverSnapshot.docs.map((doc) => Task.fromJson({
+      final tasks = snapshot.docs.map((doc) => Task.fromJson({
         ...doc.data(),
         'id': doc.id,
       })).toList();
-    } catch (e) {
-      print('Error getting tasks: $e');
-      return [];
-    }
-  }
 
-  Stream<List<Task>> getTasksStream() {
-    if (!isUserAuthenticated) {
-      return Stream.value([]);
+      await _localStorage.saveTasks(tasks, currentUserId);
+    } catch (e) {
+      print('Error syncing tasks from Firebase: $e');
     }
-    
-    return _firestore.collection('tasks')
-        .where('userId', isEqualTo: currentUserId)
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .map((snapshot) => snapshot.docs.map((doc) => Task.fromJson({
-          ...doc.data(),
-          'id': doc.id,
-        })).toList());
   }
 
   // Получение задач по предмету
@@ -261,43 +346,66 @@ class DatabaseService {
   }
 
   Future<void> addTask(Task task) async {
-    if (!isUserAuthenticated) return;
+    // Сохраняем в локальное хранилище сразу
+    await _localStorage.addTask(task, currentUserId);
     
+    // Эмитим обновленные данные
+    _loadAndEmitTasks();
+    
+    // Если Firebase доступен и пользователь авторизован, синхронизируем
+    if (_firebaseAvailable && isUserAuthenticated) {
+      _syncTaskToFirebase(task);
+    }
+  }
+
+  void _syncTaskToFirebase(Task task) async {
     try {
       await _firestore.collection('tasks').doc(task.id).set({
         ...task.toJson(),
         'userId': currentUserId,
         'createdAt': FieldValue.serverTimestamp(),
         'updatedAt': FieldValue.serverTimestamp(),
-      });
+      }).timeout(const Duration(seconds: 10));
     } catch (e) {
-      print('Error adding task: $e');
-      rethrow;
+      print('Error syncing task to Firebase: $e');
     }
   }
 
   Future<void> updateTask(Task task) async {
-    if (!isUserAuthenticated) return;
+    // Обновляем в локальном хранилище сразу
+    await _localStorage.updateTask(task, currentUserId);
     
-    try {
-      await _firestore.collection('tasks').doc(task.id).update({
-        ...task.toJson(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-    } catch (e) {
-      print('Error updating task: $e');
-      rethrow;
+    // Эмитим обновленные данные
+    _loadAndEmitTasks();
+    
+    // Если Firebase доступен и пользователь авторизован, синхронизируем
+    if (_firebaseAvailable && isUserAuthenticated) {
+      try {
+        await _firestore.collection('tasks').doc(task.id).update({
+          ...task.toJson(),
+          'updatedAt': FieldValue.serverTimestamp(),
+        }).timeout(const Duration(seconds: 10));
+      } catch (e) {
+        print('Error syncing updated task to Firebase: $e');
+      }
     }
   }
 
   Future<void> deleteTask(String id) async {
-    if (!isUserAuthenticated) return;
+    // Удаляем из локального хранилища сразу
+    await _localStorage.deleteTask(id, currentUserId);
     
-    try {
-      await _firestore.collection('tasks').doc(id).delete();
-    } catch (e) {
-      print('Error deleting task: $e');
-      rethrow;
+    // Эмитим обновленные данные
+    _loadAndEmitTasks();
+    
+    // Если Firebase доступен и пользователь авторизован, синхронизируем
+    if (_firebaseAvailable && isUserAuthenticated) {
+      try {
+        await _firestore.collection('tasks').doc(id).delete()
+            .timeout(const Duration(seconds: 10));
+      } catch (e) {
+        print('Error deleting task from Firebase: $e');
+      }
     }
   }
 
@@ -450,9 +558,10 @@ class DatabaseService {
 
   void setCurrentUser(String? userId) {
     _currentUserId = userId;
+    _localStorage.setCurrentUserId(userId);
   }
 
-  String get currentUserId => _currentUserId ?? '';
+  String get currentUserId => _currentUserId ?? 'anonymous';
 
   bool get isUserAuthenticated => _currentUserId != null;
 

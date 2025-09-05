@@ -12,9 +12,16 @@ import 'widgets/main_navigation.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  await Firebase.initializeApp();
+  
+  try {
+    await Firebase.initializeApp();
+  } catch (e) {
+    print('Firebase initialization failed: $e');
+  }
+  
   await NotificationService().initialize();
-  DatabaseService().initialize();
+  await DatabaseService().initialize();
+  
   runApp(StudyTodoApp());
 }
 
