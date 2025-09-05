@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import '../blocs/tasks_bloc.dart';
 import '../blocs/subjects_bloc.dart';
+import '../blocs/auth_bloc.dart';
 import '../models/task.dart';
 import '../models/subject.dart';
 import '../utils/task_grouper.dart';
 import '../widgets/task_group_card.dart';
+import '../services/ai_service.dart';
 
 class HomeScreen extends StatelessWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -175,6 +177,7 @@ class _AddTaskDialogState extends State<_AddTaskDialog> {
   DateTime _deadline = DateTime.now().add(const Duration(days: 1));
   TaskPriority _priority = TaskPriority.medium;
   Subject? _selectedSubject;
+  bool _isImproving = false;
 
   @override
   Widget build(BuildContext context) {
@@ -191,7 +194,32 @@ class _AddTaskDialogState extends State<_AddTaskDialog> {
             const SizedBox(height: 16),
             TextField(
               controller: _descriptionController,
-              decoration: const InputDecoration(labelText: 'Описание'),
+              decoration: InputDecoration(
+                labelText: 'Описание',
+                suffixIcon: BlocBuilder<AuthBloc, AuthState>(
+                  builder: (context, authState) {
+                    if (authState is AuthAuthenticated && 
+                        authState.userProfile.hasGeminiApiKey &&
+                        _descriptionController.text.isNotEmpty) {
+                      return _isImproving
+                          ? const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: Padding(
+                                padding: EdgeInsets.all(12.0),
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                            )
+                          : IconButton(
+                              icon: const Icon(Icons.auto_fix_high),
+                              onPressed: () => _improveDescription(authState.userProfile.geminiApiKey!),
+                              tooltip: 'Улучшить с помощью AI',
+                            );
+                    }
+                    return const SizedBox.shrink();
+                  },
+                ),
+              ),
               maxLines: 3,
             ),
             const SizedBox(height: 16),
@@ -285,6 +313,34 @@ class _AddTaskDialogState extends State<_AddTaskDialog> {
         return 'Средний';
       case TaskPriority.high:
         return 'Высокий';
+    }
+  }
+
+  Future<void> _improveDescription(String apiKey) async {
+    if (_descriptionController.text.isEmpty || _isImproving) return;
+    
+    setState(() => _isImproving = true);
+    
+    try {
+      AIService().initialize(apiKey);
+      final improvedDescription = await AIService().improveTaskDescription(_descriptionController.text);
+      
+      if (mounted) {
+        setState(() {
+          _descriptionController.text = improvedDescription;
+          _isImproving = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isImproving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Ошибка улучшения описания: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 

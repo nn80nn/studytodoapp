@@ -61,7 +61,7 @@ class AnalyticsScreen extends StatelessWidget {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildUserProfile(authState.userProfile),
+                    _buildUserProfile(context, authState.userProfile),
                     const SizedBox(height: 20),
                     BlocBuilder<TasksBloc, TasksState>(
                       builder: (context, tasksState) {
@@ -193,7 +193,7 @@ class AnalyticsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildUserProfile(UserProfile profile) {
+  Widget _buildUserProfile(BuildContext context, UserProfile profile) {
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16.0),
@@ -244,12 +244,28 @@ class AnalyticsScreen extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-            Text(
-              'Последний вход: ${_formatDate(profile.lastLoginAt)}',
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 12,
-              ),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'Последний вход: ${_formatDate(profile.lastLoginAt)}',
+                  style: TextStyle(
+                    color: Colors.grey[600],
+                    fontSize: 12,
+                  ),
+                ),
+                TextButton.icon(
+                  onPressed: () => _showApiKeyDialog(context, profile),
+                  icon: Icon(
+                    profile.hasGeminiApiKey ? Icons.smart_toy : Icons.smart_toy_outlined,
+                    size: 16,
+                  ),
+                  label: Text(
+                    profile.hasGeminiApiKey ? 'Настроить AI' : 'Добавить AI ключ',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -323,14 +339,6 @@ class AnalyticsScreen extends StatelessWidget {
               },
               icon: const Icon(Icons.person_add),
               label: const Text('Регистрация'),
-            ),
-            const SizedBox(height: 8),
-            TextButton.icon(
-              onPressed: () {
-                context.read<AuthBloc>().add(AuthSignInAnonymously());
-              },
-              icon: const Icon(Icons.person_outline),
-              label: const Text('Войти анонимно'),
             ),
           ],
         ),
@@ -515,6 +523,90 @@ class AnalyticsScreen extends StatelessWidget {
               }
             },
             child: const Text('Отправить'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showApiKeyDialog(BuildContext context, UserProfile profile) {
+    final apiKeyController = TextEditingController(text: profile.geminiApiKey ?? '');
+    final GlobalKey<FormState> formKey = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Настройка AI'),
+        content: Form(
+          key: formKey,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Для использования AI-функций введите ваш API ключ Google Gemini:',
+                style: TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: apiKeyController,
+                decoration: const InputDecoration(
+                  labelText: 'API ключ Gemini',
+                  prefixIcon: Icon(Icons.key),
+                  helperText: 'Получить ключ можно на ai.google.dev',
+                ),
+                obscureText: true,
+                validator: (value) {
+                  if (value != null && value.isNotEmpty && value.length < 10) {
+                    return 'API ключ должен содержать минимум 10 символов';
+                  }
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'С помощью AI вы сможете улучшать описания задач - исправлять ошибки и делать текст более читаемым.',
+                style: TextStyle(fontSize: 12, color: Colors.grey),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Отмена'),
+          ),
+          if (profile.hasGeminiApiKey)
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                context.read<AuthBloc>().add(AuthUpdateGeminiApiKey(null));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('API ключ удален'),
+                  ),
+                );
+              },
+              child: const Text('Удалить', style: TextStyle(color: Colors.red)),
+            ),
+          ElevatedButton(
+            onPressed: () {
+              if (formKey.currentState?.validate() ?? false) {
+                Navigator.of(context).pop();
+                final newApiKey = apiKeyController.text.trim();
+                context.read<AuthBloc>().add(AuthUpdateGeminiApiKey(
+                  newApiKey.isEmpty ? null : newApiKey,
+                ));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text(newApiKey.isEmpty 
+                        ? 'API ключ удален' 
+                        : 'API ключ сохранен'),
+                  ),
+                );
+              }
+            },
+            child: const Text('Сохранить'),
           ),
         ],
       ),

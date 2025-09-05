@@ -5,16 +5,24 @@ class AIService {
   factory AIService() => _instance;
   AIService._internal();
 
-  late final GenerativeModel _model;
+  GenerativeModel? _model;
+  
+  bool get isInitialized => _model != null;
 
-  void initialize(String apiKey) {
-    _model = GenerativeModel(
-      model: 'gemini-pro',
-      apiKey: apiKey,
-    );
+  void initialize(String? apiKey) {
+    if (apiKey != null && apiKey.isNotEmpty) {
+      _model = GenerativeModel(
+        model: 'gemini-pro',
+        apiKey: apiKey,
+      );
+    } else {
+      _model = null;
+    }
   }
 
   Future<String> correctText(String text) async {
+    if (_model == null) return text;
+    
     try {
       final prompt = '''
 Исправь орфографические и грамматические ошибки в следующем тексте, сохраняя его смысл:
@@ -24,7 +32,7 @@ class AIService {
 ''';
 
       final content = [Content.text(prompt)];
-      final response = await _model.generateContent(content);
+      final response = await _model!.generateContent(content);
       return response.text?.trim() ?? text;
     } catch (e) {
       return text; // Возвращаем оригинальный текст при ошибке
@@ -32,6 +40,8 @@ class AIService {
   }
 
   Future<Map<String, String>> autoCompleteTask(String title, String subjectName) async {
+    if (_model == null) return {};
+    
     try {
       final prompt = '''
 Для предмета "$subjectName" и задачи с названием "$title" предложи:
@@ -48,7 +58,7 @@ class AIService {
 ''';
 
       final content = [Content.text(prompt)];
-      final response = await _model.generateContent(content);
+      final response = await _model!.generateContent(content);
       
       // Простое парсинг JSON из ответа
       final text = response.text ?? '';
@@ -59,6 +69,32 @@ class AIService {
       };
     } catch (e) {
       return {};
+    }
+  }
+
+  Future<String> improveTaskDescription(String description) async {
+    if (_model == null) return description;
+    
+    try {
+      final prompt = '''
+Улучши описание следующей учебной задачи, сделав его более понятным, структурированным и грамматически правильным:
+
+"$description"
+
+Требования:
+- Исправь орфографические и грамматические ошибки
+- Структурируй текст для лучшего понимания
+- Сохрани основной смысл и содержание
+- Сделай текст более читаемым и профессиональным
+
+Верни только улучшенное описание без дополнительных комментариев.
+''';
+
+      final content = [Content.text(prompt)];
+      final response = await _model!.generateContent(content);
+      return response.text?.trim() ?? description;
+    } catch (e) {
+      return description;
     }
   }
 

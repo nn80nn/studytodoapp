@@ -52,6 +52,13 @@ class AuthUserChanged extends AuthEvent {
   List<Object?> get props => [user];
 }
 
+class AuthUpdateGeminiApiKey extends AuthEvent {
+  final String? apiKey;
+  AuthUpdateGeminiApiKey(this.apiKey);
+  @override
+  List<Object?> get props => [apiKey];
+}
+
 // States
 abstract class AuthState extends Equatable {
   @override
@@ -95,6 +102,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<AuthSignOut>(_onSignOut);
     on<AuthDeleteAccount>(_onDeleteAccount);
     on<AuthUserChanged>(_onUserChanged);
+    on<AuthUpdateGeminiApiKey>(_onUpdateGeminiApiKey);
     
     // Автоматическая инициализация
     add(AuthInitialize());
@@ -224,7 +232,39 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     }
   }
 
+  Future<void> _onUpdateGeminiApiKey(AuthUpdateGeminiApiKey event, Emitter<AuthState> emit) async {
+    final currentState = state;
+    if (currentState is! AuthAuthenticated) return;
+    
+    try {
+      emit(AuthLoading());
+      
+      // Обновляем профиль с новым API ключом
+      final updatedProfile = currentState.userProfile.copyWith(
+        geminiApiKey: event.apiKey,
+      );
+      
+      // Сохраняем обновленный профиль в Firestore
+      await _databaseService.saveUserProfile(updatedProfile);
+      
+      // Инициализируем AI сервис с новым ключом
+      // (AI сервис инициализируется автоматически при использовании)
+      
+      emit(AuthAuthenticated(updatedProfile));
+    } catch (e) {
+      emit(AuthError('Ошибка обновления API ключа: ${e.toString()}'));
+    }
+  }
+
   Future<UserProfile> _createOrUpdateUserProfile(User user) async {
+    // Получаем существующий профиль пользователя (если есть)
+    UserProfile? existingProfile;
+    try {
+      existingProfile = await _databaseService.getUserProfile(user.uid);
+    } catch (e) {
+      print('Не удалось загрузить существующий профиль: $e');
+    }
+    
     // Получаем статистику пользователя
     final stats = await _databaseService.getUserStats(user.uid);
     
@@ -234,11 +274,12 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       displayName: user.displayName,
       photoURL: user.photoURL,
       isAnonymous: user.isAnonymous,
-      createdAt: user.metadata.creationTime ?? DateTime.now(),
+      createdAt: existingProfile?.createdAt ?? user.metadata.creationTime ?? DateTime.now(),
       lastLoginAt: DateTime.now(),
       totalTasks: stats['totalTasks'] ?? 0,
       completedTasks: stats['completedTasks'] ?? 0,
       totalSubjects: stats['totalSubjects'] ?? 0,
+      geminiApiKey: existingProfile?.geminiApiKey, // Сохраняем существующий API ключ
     );
 
     // Сохраняем/обновляем профиль в Firestore

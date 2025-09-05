@@ -13,6 +13,9 @@ class UserProfile {
   final int totalTasks;
   final int completedTasks;
   final int totalSubjects;
+  
+  // Настройки AI
+  final String? geminiApiKey;
 
   UserProfile({
     required this.uid,
@@ -25,6 +28,7 @@ class UserProfile {
     this.totalTasks = 0,
     this.completedTasks = 0,
     this.totalSubjects = 0,
+    this.geminiApiKey,
   });
 
   Map<String, dynamic> toJson() => {
@@ -38,6 +42,7 @@ class UserProfile {
     'totalTasks': totalTasks,
     'completedTasks': completedTasks,
     'totalSubjects': totalSubjects,
+    'geminiApiKey': geminiApiKey,
   };
 
   factory UserProfile.fromJson(Map<String, dynamic> json) => UserProfile(
@@ -51,6 +56,7 @@ class UserProfile {
     totalTasks: json['totalTasks'] ?? 0,
     completedTasks: json['completedTasks'] ?? 0,
     totalSubjects: json['totalSubjects'] ?? 0,
+    geminiApiKey: json['geminiApiKey'],
   );
 
   static DateTime _parseDateTime(dynamic dateTime) {
@@ -73,6 +79,7 @@ class UserProfile {
     int? totalTasks,
     int? completedTasks,
     int? totalSubjects,
+    String? geminiApiKey,
   }) {
     return UserProfile(
       uid: uid,
@@ -85,6 +92,7 @@ class UserProfile {
       totalTasks: totalTasks ?? this.totalTasks,
       completedTasks: completedTasks ?? this.completedTasks,
       totalSubjects: totalSubjects ?? this.totalSubjects,
+      geminiApiKey: geminiApiKey ?? this.geminiApiKey,
     );
   }
 
@@ -95,4 +103,5 @@ class UserProfile {
   String get displayNameOrEmail => displayName ?? email ?? 'Пользователь';
   
   bool get hasProfileImage => photoURL != null && photoURL!.isNotEmpty;
+  bool get hasGeminiApiKey => geminiApiKey != null && geminiApiKey!.isNotEmpty;
 }
