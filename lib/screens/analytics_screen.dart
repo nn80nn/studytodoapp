@@ -64,38 +64,31 @@ class AnalyticsScreen extends StatelessWidget {
                     _buildUserProfile(authState.userProfile),
                     const SizedBox(height: 20),
                     BlocBuilder<TasksBloc, TasksState>(
-                      builder: (context, state) {
-                        if (state is TasksLoading) {
-                          return const Center(child: CircularProgressIndicator());
-                        } else if (state is TasksLoaded) {
-                          return _buildTasksStats(state.tasks);
-                        } else if (state is TasksError) {
-                          return Card(
-                            child: Padding(
-                              padding: const EdgeInsets.all(16.0),
-                              child: Text('Ошибка загрузки задач: ${state.message}'),
-                            ),
-                          );
-                        }
-                        return const Center(child: CircularProgressIndicator());
-                      },
-                    ),
-                    const SizedBox(height: 20),
-                    BlocBuilder<SubjectsBloc, SubjectsState>(
-                      builder: (context, state) {
-                        if (state is SubjectsLoading) {
-                          return const Center(child: CircularProgressIndicator());
-                        } else if (state is SubjectsLoaded) {
-                          return _buildSubjectsStats(state.subjects.length);
-                        } else if (state is SubjectsError) {
-                          return Card(
-                            child: Padding(
-                              padding: const EdgeInsets.all(16.0),
-                              child: Text('Ошибка загрузки предметов: ${state.message}'),
-                            ),
-                          );
-                        }
-                        return const Center(child: CircularProgressIndicator());
+                      builder: (context, tasksState) {
+                        return BlocBuilder<SubjectsBloc, SubjectsState>(
+                          builder: (context, subjectsState) {
+                            if (tasksState is TasksLoading || subjectsState is SubjectsLoading) {
+                              return const Center(child: CircularProgressIndicator());
+                            } else if (tasksState is TasksLoaded && subjectsState is SubjectsLoaded) {
+                              return _buildComprehensiveStats(tasksState.tasks, subjectsState.subjects.length);
+                            } else if (tasksState is TasksError) {
+                              return Card(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16.0),
+                                  child: Text('Ошибка загрузки задач: ${tasksState.message}'),
+                                ),
+                              );
+                            } else if (subjectsState is SubjectsError) {
+                              return Card(
+                                child: Padding(
+                                  padding: const EdgeInsets.all(16.0),
+                                  child: Text('Ошибка загрузки предметов: ${subjectsState.message}'),
+                                ),
+                              );
+                            }
+                            return const Center(child: CircularProgressIndicator());
+                          },
+                        );
                       },
                     ),
                   ],
@@ -125,7 +118,7 @@ class AnalyticsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildTasksStats(List<Task> tasks) {
+  Widget _buildComprehensiveStats(List<Task> tasks, int subjectsCount) {
     final completedTasks = tasks.where((task) => task.status == TaskStatus.completed).length;
     final pendingTasks = tasks.where((task) => task.status == TaskStatus.pending).length;
     final overdueTasks = tasks.where((task) => 
@@ -140,7 +133,7 @@ class AnalyticsScreen extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'Статистика задач',
+              'Общая статистика',
               style: TextStyle(
                 fontSize: 18,
                 fontWeight: FontWeight.bold,
@@ -151,38 +144,17 @@ class AnalyticsScreen extends StatelessWidget {
             _buildStatRow('Выполнено', completedTasks, Colors.green),
             _buildStatRow('В работе', pendingTasks, Colors.orange),
             _buildStatRow('Просрочено', overdueTasks, Colors.red),
-            const SizedBox(height: 16),
+            _buildStatRow('Предметов', subjectsCount, Colors.purple),
             if (tasks.isNotEmpty) ...[
+              const SizedBox(height: 16),
               Text('Процент выполнения: ${(completedTasks / tasks.length * 100).toStringAsFixed(1)}%'),
               const SizedBox(height: 8),
               LinearProgressIndicator(
                 value: completedTasks / tasks.length,
                 backgroundColor: Colors.grey[300],
-                valueColor: AlwaysStoppedAnimation<Color>(Colors.green),
+                valueColor: const AlwaysStoppedAnimation<Color>(Colors.green),
               ),
             ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSubjectsStats(int subjectsCount) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Статистика предметов',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 16),
-            _buildStatRow('Всего предметов', subjectsCount, Colors.purple),
           ],
         ),
       ),
@@ -272,29 +244,6 @@ class AnalyticsScreen extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-            const Text(
-              'Личная статистика',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 12),
-            _buildStatRow('Всего задач', profile.totalTasks, Colors.blue),
-            _buildStatRow('Выполнено', profile.completedTasks, Colors.green),
-            _buildStatRow('Осталось', profile.pendingTasks, Colors.orange),
-            _buildStatRow('Предметов', profile.totalSubjects, Colors.purple),
-            if (profile.totalTasks > 0) ...[
-              const SizedBox(height: 16),
-              Text('Процент выполнения: ${(profile.completionRate * 100).toStringAsFixed(1)}%'),
-              const SizedBox(height: 8),
-              LinearProgressIndicator(
-                value: profile.completionRate,
-                backgroundColor: Colors.grey[300],
-                valueColor: const AlwaysStoppedAnimation<Color>(Colors.green),
-              ),
-            ],
-            const SizedBox(height: 12),
             Text(
               'Последний вход: ${_formatDate(profile.lastLoginAt)}',
               style: TextStyle(
