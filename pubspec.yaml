@@ -48,6 +48,8 @@ dependencies:
   shared_preferences: ^2.2.2
   permission_handler: ^11.1.0
   connectivity_plus: ^5.0.2
+  sqflite: ^2.3.0
+  uuid: ^4.2.1
 
 dev_dependencies:
   flutter_test:

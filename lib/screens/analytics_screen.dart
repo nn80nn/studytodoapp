@@ -5,6 +5,7 @@ import '../blocs/subjects_bloc.dart';
 import '../blocs/auth_bloc.dart';
 import '../models/task.dart';
 import '../models/user_profile.dart';
+import '../services/database_service.dart';
 
 class AnalyticsScreen extends StatelessWidget {
   const AnalyticsScreen({super.key});
@@ -63,6 +64,10 @@ class AnalyticsScreen extends StatelessWidget {
                   children: [
                     _buildUserProfile(context, authState.userProfile),
                     const SizedBox(height: 20),
+                    if (!authState.userProfile.isAnonymous)
+                      _buildSyncSection(context, authState.userProfile),
+                    if (!authState.userProfile.isAnonymous)
+                      const SizedBox(height: 20),
                     BlocBuilder<TasksBloc, TasksState>(
                       builder: (context, tasksState) {
                         return BlocBuilder<SubjectsBloc, SubjectsState>(
@@ -340,6 +345,31 @@ class AnalyticsScreen extends StatelessWidget {
               icon: const Icon(Icons.person_add),
               label: const Text('Регистрация'),
             ),
+            const SizedBox(height: 24),
+            const Divider(),
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () {
+                context.read<AuthBloc>().add(AuthContinueAsAnonymous());
+              },
+              icon: const Icon(Icons.person_outline),
+              label: const Text('Продолжить как гость'),
+              style: OutlinedButton.styleFrom(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'В режиме гостя данные сохраняются только на этом устройстве',
+              style: TextStyle(
+                fontSize: 12,
+                color: Colors.grey[600],
+              ),
+              textAlign: TextAlign.center,
+            ),
           ],
         ),
       ),
@@ -611,6 +641,165 @@ class AnalyticsScreen extends StatelessWidget {
         ],
       ),
     );
+  }
+
+  Widget _buildSyncSection(BuildContext context, UserProfile profile) {
+    final databaseService = DatabaseService();
+    
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(Icons.sync, color: Colors.blue),
+                const SizedBox(width: 8),
+                const Text(
+                  'Синхронизация данных',
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const Spacer(),
+                FutureBuilder<bool>(
+                  future: databaseService.canSync,
+                  builder: (context, snapshot) {
+                    final canSync = snapshot.data ?? false;
+                    return Icon(
+                      canSync ? Icons.cloud_done : Icons.cloud_off,
+                      color: canSync ? Colors.green : Colors.orange,
+                    );
+                  },
+                ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            FutureBuilder<DateTime?>(
+              future: databaseService.lastSyncTime,
+              builder: (context, snapshot) {
+                final lastSync = snapshot.data;
+                return Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Последняя синхронизация:',
+                            style: TextStyle(
+                              color: Colors.grey[600],
+                              fontSize: 12,
+                            ),
+                          ),
+                          Text(
+                            lastSync != null 
+                                ? _formatDate(lastSync)
+                                : 'Никогда',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    FutureBuilder<bool>(
+                      future: databaseService.canSync,
+                      builder: (context, snapshot) {
+                        final canSync = snapshot.data ?? false;
+                        return ElevatedButton.icon(
+                          onPressed: canSync ? () => _syncNow(context) : null,
+                          icon: const Icon(Icons.sync, size: 16),
+                          label: const Text('Синхронизировать'),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: canSync ? Colors.blue : Colors.grey,
+                          ),
+                        );
+                      },
+                    ),
+                  ],
+                );
+              },
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Icon(
+                  Icons.info_outline,
+                  size: 16,
+                  color: Colors.grey[600],
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Данные автоматически синхронизируются при наличии интернета. Ваши задачи и предметы сохраняются локально.',
+                    style: TextStyle(
+                      color: Colors.grey[600],
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _syncNow(BuildContext context) async {
+    final databaseService = DatabaseService();
+    
+    try {
+      // Показываем индикатор загрузки
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Синхронизация данных...'),
+            ],
+          ),
+        ),
+      );
+      
+      await databaseService.forceSyncNow();
+      
+      // Закрываем диалог загрузки
+      if (context.mounted) {
+        Navigator.of(context).pop();
+        
+        // Обновляем данные в BLoC
+        context.read<TasksBloc>().add(RefreshTasks());
+        context.read<SubjectsBloc>().add(RefreshSubjects());
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Синхронизация завершена успешно'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      // Закрываем диалог загрузки в случае ошибки
+      if (context.mounted) {
+        Navigator.of(context).pop();
+        
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Ошибка синхронизации: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   String _formatDate(DateTime date) {

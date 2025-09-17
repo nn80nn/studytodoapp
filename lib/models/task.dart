@@ -13,6 +13,8 @@ class Task {
   final TaskPriority priority;
   final TaskStatus status;
   final DateTime createdAt;
+  final DateTime? updatedAt;
+  final DateTime? lastSyncAt;
 
   Task({
     required this.id,
@@ -24,6 +26,8 @@ class Task {
     this.priority = TaskPriority.medium,
     this.status = TaskStatus.pending,
     required this.createdAt,
+    this.updatedAt,
+    this.lastSyncAt,
   });
 
   Task copyWith({
@@ -33,6 +37,8 @@ class Task {
     DateTime? plannedTime,
     TaskPriority? priority,
     TaskStatus? status,
+    DateTime? updatedAt,
+    DateTime? lastSyncAt,
   }) {
     return Task(
       id: id,
@@ -44,33 +50,39 @@ class Task {
       priority: priority ?? this.priority,
       status: status ?? this.status,
       createdAt: createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      lastSyncAt: lastSyncAt ?? this.lastSyncAt,
     );
   }
 
   Map<String, dynamic> toJson() => {
     'id': id,
-    'subjectId': subjectId,
+    'subject_id': subjectId,
     'title': title,
     'description': description,
     'deadline': deadline.millisecondsSinceEpoch,
-    'plannedTime': plannedTime?.millisecondsSinceEpoch,
+    'planned_time': plannedTime?.millisecondsSinceEpoch,
     'priority': priority.index,
     'status': status.index,
-    'createdAt': createdAt.millisecondsSinceEpoch,
+    'created_at': createdAt.millisecondsSinceEpoch,
+    'updated_at': updatedAt?.millisecondsSinceEpoch,
+    'last_sync_at': lastSyncAt?.millisecondsSinceEpoch,
   };
 
   factory Task.fromJson(Map<String, dynamic> json) => Task(
     id: json['id'],
-    subjectId: json['subjectId'],
+    subjectId: json['subjectId'] ?? json['subject_id'],
     title: json['title'],
     description: json['description'],
     deadline: _parseDateTime(json['deadline']),
-    plannedTime: json['plannedTime'] != null 
-        ? _parseDateTime(json['plannedTime'])
+    plannedTime: (json['plannedTime'] ?? json['planned_time']) != null 
+        ? _parseDateTime(json['plannedTime'] ?? json['planned_time'])
         : null,
     priority: TaskPriority.values[json['priority'] ?? 1],
     status: TaskStatus.values[json['status'] ?? 0],
-    createdAt: _parseDateTime(json['createdAt']),
+    createdAt: _parseDateTime(json['createdAt'] ?? json['created_at']),
+    updatedAt: (json['updatedAt'] ?? json['updated_at']) != null ? _parseDateTime(json['updatedAt'] ?? json['updated_at']) : null,
+    lastSyncAt: (json['lastSyncAt'] ?? json['last_sync_at']) != null ? _parseDateTime(json['lastSyncAt'] ?? json['last_sync_at']) : null,
   );
 
   static DateTime _parseDateTime(dynamic dateTime) {

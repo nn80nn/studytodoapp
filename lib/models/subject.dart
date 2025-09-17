@@ -7,6 +7,8 @@ class Subject {
   final Color color;
   final String? description;
   final DateTime createdAt;
+  final DateTime? updatedAt;
+  final DateTime? lastSyncAt;
 
   Subject({
     required this.id,
@@ -14,6 +16,8 @@ class Subject {
     required this.color,
     this.description,
     required this.createdAt,
+    this.updatedAt,
+    this.lastSyncAt,
   });
 
   Map<String, dynamic> toJson() => {
@@ -21,7 +25,9 @@ class Subject {
     'name': name,
     'color': color.value,
     'description': description,
-    'createdAt': createdAt.millisecondsSinceEpoch,
+    'created_at': createdAt.millisecondsSinceEpoch,
+    'updated_at': updatedAt?.millisecondsSinceEpoch,
+    'last_sync_at': lastSyncAt?.millisecondsSinceEpoch,
   };
 
   factory Subject.fromJson(Map<String, dynamic> json) => Subject(
@@ -29,7 +35,9 @@ class Subject {
     name: json['name'],
     color: Color(json['color']),
     description: json['description'],
-    createdAt: _parseDateTime(json['createdAt']),
+    createdAt: _parseDateTime(json['createdAt'] ?? json['created_at']),
+    updatedAt: (json['updatedAt'] ?? json['updated_at']) != null ? _parseDateTime(json['updatedAt'] ?? json['updated_at']) : null,
+    lastSyncAt: (json['lastSyncAt'] ?? json['last_sync_at']) != null ? _parseDateTime(json['lastSyncAt'] ?? json['last_sync_at']) : null,
   );
 
   static DateTime _parseDateTime(dynamic dateTime) {

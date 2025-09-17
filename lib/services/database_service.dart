@@ -2,10 +2,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
+import 'package:uuid/uuid.dart';
 import '../models/task.dart';
 import '../models/subject.dart';
 import '../models/user_profile.dart';
-import 'local_storage_service.dart';
+import 'sqlite_service.dart';
 
 class DatabaseService {
   static final DatabaseService _instance = DatabaseService._internal();
@@ -13,7 +14,8 @@ class DatabaseService {
   DatabaseService._internal();
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
-  final LocalStorageService _localStorage = LocalStorageService();
+  final SQLiteService _sqlite = SQLiteService();
+  final Uuid _uuid = const Uuid();
   
   // Контроллеры для реал-тайм стримов
   StreamController<List<Task>>? _tasksStreamController;
@@ -27,10 +29,31 @@ class DatabaseService {
   StreamSubscription<ConnectivityResult>? _connectivitySubscription;
 
   Future<void> initialize() async {
-    await _localStorage.initialize();
+    await _sqlite.database; // Инициализируем SQLite
     _setupConnectivityListener();
     _enableOfflineSupport();
     _checkFirebaseAvailability();
+    
+    // Инициализируем анонимного пользователя, если необходимо
+    await _initializeCurrentUser();
+  }
+
+  Future<void> _initializeCurrentUser() async {
+    // Пытаемся загрузить существующего пользователя
+    final existingUserId = await _sqlite.getSetting('current_user_id');
+    if (existingUserId != null) {
+      _currentUserId = existingUserId;
+      await _sqlite.ensureUserExists(existingUserId);
+    } else {
+      // Создаем нового анонимного пользователя
+      await _initializeAnonymousUser();
+    }
+  }
+
+  Future<void> _initializeAnonymousUser() async {
+    final anonymousUserId = 'anonymous_${_uuid.v4()}';
+    await _sqlite.ensureUserExists(anonymousUserId);
+    setCurrentUser(anonymousUserId);
   }
 
   void _setupConnectivityListener() {
@@ -69,27 +92,26 @@ class DatabaseService {
 
   // Subjects
   Future<List<Subject>> getSubjects() async {
-    // Всегда загружаем из локального хранилища сначала
-    List<Subject> localSubjects = await _localStorage.getSubjects(currentUserId);
+    // Всегда загружаем из локального хранилища (SQLite)
+    List<Subject> localSubjects = await _sqlite.getSubjects(currentUserId);
     
-    // Если Firebase доступен и пользователь авторизован, синхронизируем
-    if (_firebaseAvailable && isUserAuthenticated) {
-      _syncSubjectsFromFirebase();
+    // Запускаем синхронизацию в фоне, если доступен Firebase
+    if (_firebaseAvailable && isAuthenticatedUser) {
+      _syncSubjectsInBackground();
     }
     
     return localSubjects;
   }
 
   Stream<List<Subject>> getSubjectsStream() {
-    // Создаем стрим из локальных данных
     _subjectsStreamController ??= StreamController<List<Subject>>.broadcast();
     
     // Загружаем и эмитим локальные данные сразу
     _loadAndEmitSubjects();
     
-    // Если Firebase доступен, подписываемся на обновления
-    if (_firebaseAvailable && isUserAuthenticated) {
-      _setupSubjectsFirebaseStream();
+    // Если Firebase доступен, запускаем фоновую синхронизацию
+    if (_firebaseAvailable && isAuthenticatedUser) {
+      _setupSubjectsSync();
     }
     
     return _subjectsStreamController!.stream;
@@ -97,7 +119,7 @@ class DatabaseService {
 
   void _loadAndEmitSubjects() async {
     try {
-      final subjects = await _localStorage.getSubjects(currentUserId);
+      final subjects = await _sqlite.getSubjects(currentUserId);
       _subjectsStreamController?.add(subjects);
     } catch (e) {
       print('Error loading local subjects: $e');
@@ -105,148 +127,219 @@ class DatabaseService {
     }
   }
 
-  void _setupSubjectsFirebaseStream() {
-    _subjectsSubscription?.cancel();
-    _subjectsSubscription = _firestore.collection('subjects')
-        .where('userId', isEqualTo: currentUserId)
-        .orderBy('createdAt', descending: false)
-        .snapshots()
-        .listen((snapshot) async {
-      try {
-        final subjects = snapshot.docs.map((doc) {
-          try {
-            return Subject.fromJson({
-              ...doc.data(),
-              'id': doc.id,
-            });
-          } catch (e) {
-            print('Error parsing subject ${doc.id}: $e');
-            return Subject(
-              id: doc.id,
-              name: doc.data()['name'] ?? 'Unknown Subject',
-              color: const Color(0xFF26C6DA),
-              description: doc.data()['description'],
-              createdAt: DateTime.now(),
-            );
-          }
-        }).toList();
-
-        // Сохраняем в локальное хранилище
-        await _localStorage.saveSubjects(subjects, currentUserId);
-        
-        // Эмитим обновленные данные
-        _subjectsStreamController?.add(subjects);
-      } catch (e) {
-        print('Error in subjects Firebase stream: $e');
-      }
-    }, onError: (error) {
-      print('Firebase subjects stream error: $error');
-      // При ошибке загружаем из локального хранилища
-      _loadAndEmitSubjects();
-    });
-  }
-
-  void _syncSubjectsFromFirebase() async {
-    if (!_firebaseAvailable || !isUserAuthenticated) return;
-    
+  void _syncSubjectsInBackground() async {
     try {
-      final snapshot = await _firestore.collection('subjects')
-          .where('userId', isEqualTo: currentUserId)
-          .orderBy('createdAt', descending: false)
-          .get(GetOptions(source: Source.server))
-          .timeout(const Duration(seconds: 5));
-      
-      final subjects = snapshot.docs.map((doc) => Subject.fromJson({
-        ...doc.data(),
-        'id': doc.id,
-      })).toList();
-
-      await _localStorage.saveSubjects(subjects, currentUserId);
+      await _syncSubjectsWithCloud();
     } catch (e) {
-      print('Error syncing subjects from Firebase: $e');
+      print('Background subjects sync error: $e');
     }
   }
 
+  void _setupSubjectsSync() {
+    // Периодическая синхронизация каждые 2 минуты (уменьшена частота для избежания блокировок)
+    Timer.periodic(const Duration(minutes: 2), (timer) {
+      if (_firebaseAvailable && isAuthenticatedUser) {
+        _syncSubjectsInBackground();
+      } else {
+        timer.cancel();
+      }
+    });
+  }
+
+  Future<void> _syncSubjectsWithCloud() async {
+    if (!_firebaseAvailable || !isAuthenticatedUser) return;
+
+    try {
+      final userId = await getCurrentUserIdAsync();
+      
+      // Получаем время последней синхронизации
+      final lastSyncTime = await _getLastSyncTime();
+      
+      // Получаем изменения из облака после последней синхронизации
+      final cloudSubjects = await _getCloudSubjectsUpdatedAfter(lastSyncTime);
+      
+      // Получаем локальные изменения после последней синхронизации
+      final localSubjects = await _sqlite.getSubjectsUpdatedAfter(userId, lastSyncTime);
+      
+      // Применяем алгоритм слияния (как в Steam Cloud)
+      await _mergeSubjects(localSubjects, cloudSubjects);
+      
+      // Обновляем время последней синхронизации
+      await _updateLastSyncTime(DateTime.now());
+      
+      // Обновляем стрим
+      _loadAndEmitSubjects();
+      
+    } catch (e) {
+      print('Error syncing subjects with cloud: $e');
+    }
+  }
+
+  Future<List<Subject>> _getCloudSubjectsUpdatedAfter(DateTime timestamp) async {
+    final userId = await getCurrentUserIdAsync();
+    final snapshot = await _firestore.collection('subjects')
+        .where('userId', isEqualTo: userId)
+        .where('updatedAt', isGreaterThan: Timestamp.fromDate(timestamp))
+        .orderBy('updatedAt', descending: false)
+        .get(GetOptions(source: Source.server));
+    
+    return snapshot.docs.map((doc) => Subject.fromJson({
+      ...doc.data(),
+      'id': doc.id,
+    })).toList();
+  }
+
+  Future<void> _mergeSubjects(List<Subject> localSubjects, List<Subject> cloudSubjects) async {
+    final userId = await getCurrentUserIdAsync();
+    final Map<String, Subject> mergedSubjects = {};
+    
+    // Добавляем локальные изменения
+    for (final subject in localSubjects) {
+      mergedSubjects[subject.id] = subject;
+    }
+    
+    // Сравниваем с облачными и выбираем более новые
+    for (final cloudSubject in cloudSubjects) {
+      final localSubject = mergedSubjects[cloudSubject.id];
+      
+      if (localSubject == null) {
+        // Новый предмет из облака
+        mergedSubjects[cloudSubject.id] = cloudSubject;
+        await _sqlite.insertOrUpdateSubject(cloudSubject, userId);
+      } else {
+        // Сравниваем время изменения
+        final localTime = localSubject.updatedAt ?? localSubject.createdAt;
+        final cloudTime = cloudSubject.updatedAt ?? cloudSubject.createdAt;
+        
+        if (cloudTime.isAfter(localTime)) {
+          // Облачная версия новее
+          mergedSubjects[cloudSubject.id] = cloudSubject;
+          await _sqlite.insertOrUpdateSubject(cloudSubject, userId);
+        } else if (localTime.isAfter(cloudTime)) {
+          // Локальная версия новее, загружаем в облако
+          await _uploadSubjectToCloud(localSubject);
+        }
+      }
+    }
+    
+    // Загружаем новые локальные предметы в облако
+    for (final localSubject in localSubjects) {
+      final hasInCloud = cloudSubjects.any((cs) => cs.id == localSubject.id);
+      if (!hasInCloud) {
+        await _uploadSubjectToCloud(localSubject);
+      }
+    }
+  }
+
+  Future<void> _uploadSubjectToCloud(Subject subject) async {
+    try {
+      final userId = await getCurrentUserIdAsync();
+      await _firestore.collection('subjects').doc(subject.id).set({
+        ...subject.toJson(),
+        'userId': userId,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }).timeout(const Duration(seconds: 10));
+    } catch (e) {
+      print('Error uploading subject to cloud: $e');
+    }
+  }
+
+
+
   Future<void> addSubject(Subject subject) async {
-    // Сохраняем в локальное хранилище сразу
-    await _localStorage.addSubject(subject, currentUserId);
+    // Новый предмет с меткой времени создания
+    final newSubject = Subject(
+      id: subject.id,
+      name: subject.name,
+      color: subject.color,
+      description: subject.description,
+      createdAt: subject.createdAt,
+      updatedAt: DateTime.now(),
+    );
+    
+    // Сохраняем в SQLite
+    await _sqlite.insertOrUpdateSubject(newSubject, currentUserId);
     
     // Эмитим обновленные данные
     _loadAndEmitSubjects();
     
-    // Если Firebase доступен и пользователь авторизован, синхронизируем
-    if (_firebaseAvailable && isUserAuthenticated) {
-      _syncSubjectToFirebase(subject);
+    // Запускаем фоновую синхронизацию
+    if (_firebaseAvailable && isAuthenticatedUser) {
+      _uploadSubjectToCloud(newSubject);
     }
   }
 
-  void _syncSubjectToFirebase(Subject subject) async {
-    try {
-      await _firestore.collection('subjects').doc(subject.id).set({
-        ...subject.toJson(),
-        'userId': currentUserId,
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      }).timeout(const Duration(seconds: 10));
-    } catch (e) {
-      print('Error syncing subject to Firebase: $e');
-    }
-  }
 
   Future<void> updateSubject(Subject subject) async {
-    try {
-      await _firestore.collection('subjects').doc(subject.id).update({
-        ...subject.toJson(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      });
-    } catch (e) {
-      print('Error updating subject: $e');
-      rethrow;
+    // Обновляем предмет с новой меткой времени
+    final updatedSubject = Subject(
+      id: subject.id,
+      name: subject.name,
+      color: subject.color,
+      description: subject.description,
+      createdAt: subject.createdAt,
+      updatedAt: DateTime.now(),
+    );
+    
+    // Обновляем в SQLite
+    await _sqlite.updateSubject(updatedSubject, currentUserId);
+    
+    // Эмитим обновленные данные
+    _loadAndEmitSubjects();
+    
+    // Запускаем фоновую синхронизацию
+    if (_firebaseAvailable && isAuthenticatedUser) {
+      _uploadSubjectToCloud(updatedSubject);
     }
   }
 
   Future<void> deleteSubject(String id) async {
-    try {
-      // Проверяем есть ли связанные задачи
-      final tasksQuery = await _firestore.collection('tasks')
-          .where('subjectId', isEqualTo: id)
-          .limit(1)
-          .get();
-      
-      if (tasksQuery.docs.isNotEmpty) {
-        throw Exception('Нельзя удалить предмет, для которого есть задачи');
+    // Проверяем есть ли связанные задачи в локальной базе
+    final tasks = await _sqlite.getTasks(currentUserId);
+    final linkedTasks = tasks.where((task) => task.subjectId == id).toList();
+    
+    if (linkedTasks.isNotEmpty) {
+      throw Exception('Нельзя удалить предмет, для которого есть задачи');
+    }
+    
+    // Мягкое удаление (помечаем как удаленный)
+    await _sqlite.deleteSubject(id, currentUserId);
+    
+    // Эмитим обновленные данные
+    _loadAndEmitSubjects();
+    
+    // Удаляем из облака
+    if (_firebaseAvailable && isAuthenticatedUser) {
+      try {
+        await _firestore.collection('subjects').doc(id).delete();
+      } catch (e) {
+        print('Error deleting subject from cloud: $e');
       }
-      
-      await _firestore.collection('subjects').doc(id).delete();
-    } catch (e) {
-      print('Error deleting subject: $e');
-      rethrow;
     }
   }
 
   // Tasks
   Future<List<Task>> getTasks() async {
-    // Всегда загружаем из локального хранилища сначала
-    List<Task> localTasks = await _localStorage.getTasks(currentUserId);
+    // Всегда загружаем из локального хранилища (SQLite)
+    List<Task> localTasks = await _sqlite.getTasks(currentUserId);
     
-    // Если Firebase доступен и пользователь авторизован, синхронизируем
-    if (_firebaseAvailable && isUserAuthenticated) {
-      _syncTasksFromFirebase();
+    // Запускаем синхронизацию в фоне, если доступен Firebase
+    if (_firebaseAvailable && isAuthenticatedUser) {
+      _syncTasksInBackground();
     }
     
     return localTasks;
   }
 
   Stream<List<Task>> getTasksStream() {
-    // Создаем стрим из локальных данных
     _tasksStreamController ??= StreamController<List<Task>>.broadcast();
     
     // Загружаем и эмитим локальные данные сразу
     _loadAndEmitTasks();
     
-    // Если Firebase доступен, подписываемся на обновления
-    if (_firebaseAvailable && isUserAuthenticated) {
-      _setupTasksFirebaseStream();
+    // Если Firebase доступен, запускаем фоновую синхронизацию
+    if (_firebaseAvailable && isAuthenticatedUser) {
+      _setupTasksSync();
     }
     
     return _tasksStreamController!.stream;
@@ -254,7 +347,7 @@ class DatabaseService {
 
   void _loadAndEmitTasks() async {
     try {
-      final tasks = await _localStorage.getTasks(currentUserId);
+      final tasks = await _sqlite.getTasks(currentUserId);
       _tasksStreamController?.add(tasks);
     } catch (e) {
       print('Error loading local tasks: $e');
@@ -262,169 +355,232 @@ class DatabaseService {
     }
   }
 
-  void _setupTasksFirebaseStream() {
-    _tasksSubscription?.cancel();
-    _tasksSubscription = _firestore.collection('tasks')
-        .where('userId', isEqualTo: currentUserId)
-        .orderBy('createdAt', descending: true)
-        .snapshots()
-        .listen((snapshot) async {
-      try {
-        final tasks = snapshot.docs.map((doc) => Task.fromJson({
-          ...doc.data(),
-          'id': doc.id,
-        })).toList();
+  void _syncTasksInBackground() async {
+    try {
+      await _syncTasksWithCloud();
+    } catch (e) {
+      print('Background tasks sync error: $e');
+    }
+  }
 
-        // Сохраняем в локальное хранилище
-        await _localStorage.saveTasks(tasks, currentUserId);
-        
-        // Эмитим обновленные данные
-        _tasksStreamController?.add(tasks);
-      } catch (e) {
-        print('Error in tasks Firebase stream: $e');
+  void _setupTasksSync() {
+    // Периодическая синхронизация каждые 2 минуты (уменьшена частота для избежания блокировок)
+    Timer.periodic(const Duration(minutes: 2), (timer) {
+      if (_firebaseAvailable && isAuthenticatedUser) {
+        _syncTasksInBackground();
+      } else {
+        timer.cancel();
       }
-    }, onError: (error) {
-      print('Firebase tasks stream error: $error');
-      // При ошибке загружаем из локального хранилища
-      _loadAndEmitTasks();
     });
   }
 
-  void _syncTasksFromFirebase() async {
-    if (!_firebaseAvailable || !isUserAuthenticated) return;
-    
-    try {
-      final snapshot = await _firestore.collection('tasks')
-          .where('userId', isEqualTo: currentUserId)
-          .orderBy('createdAt', descending: true)
-          .get(GetOptions(source: Source.server))
-          .timeout(const Duration(seconds: 5));
-      
-      final tasks = snapshot.docs.map((doc) => Task.fromJson({
-        ...doc.data(),
-        'id': doc.id,
-      })).toList();
+  Future<void> _syncTasksWithCloud() async {
+    if (!_firebaseAvailable || !isAuthenticatedUser) return;
 
-      await _localStorage.saveTasks(tasks, currentUserId);
+    try {
+      final userId = await getCurrentUserIdAsync();
+      
+      // Получаем время последней синхронизации
+      final lastSyncTime = await _getLastSyncTime();
+      
+      // Получаем изменения из облака после последней синхронизации
+      final cloudTasks = await _getCloudTasksUpdatedAfter(lastSyncTime);
+      
+      // Получаем локальные изменения после последней синхронизации
+      final localTasks = await _sqlite.getTasksUpdatedAfter(userId, lastSyncTime);
+      
+      // Применяем алгоритм слияния (как в Steam Cloud)
+      await _mergeTasks(localTasks, cloudTasks);
+      
+      // Обновляем время последней синхронизации
+      await _updateLastSyncTime(DateTime.now());
+      
+      // Обновляем стрим
+      _loadAndEmitTasks();
+      
     } catch (e) {
-      print('Error syncing tasks from Firebase: $e');
+      print('Error syncing tasks with cloud: $e');
     }
   }
 
-  // Получение задач по предмету
-  Stream<List<Task>> getTasksBySubjectStream(String subjectId) {
-    if (!isUserAuthenticated) {
-      return Stream.value([]);
+  Future<List<Task>> _getCloudTasksUpdatedAfter(DateTime timestamp) async {
+    final userId = await getCurrentUserIdAsync();
+    final snapshot = await _firestore.collection('tasks')
+        .where('userId', isEqualTo: userId)
+        .where('updatedAt', isGreaterThan: Timestamp.fromDate(timestamp))
+        .orderBy('updatedAt', descending: false)
+        .get(GetOptions(source: Source.server));
+    
+    return snapshot.docs.map((doc) => Task.fromJson({
+      ...doc.data(),
+      'id': doc.id,
+    })).toList();
+  }
+
+  Future<void> _mergeTasks(List<Task> localTasks, List<Task> cloudTasks) async {
+    final userId = await getCurrentUserIdAsync();
+    final Map<String, Task> mergedTasks = {};
+    
+    // Добавляем локальные изменения
+    for (final task in localTasks) {
+      mergedTasks[task.id] = task;
     }
     
-    return _firestore.collection('tasks')
-        .where('userId', isEqualTo: currentUserId)
-        .where('subjectId', isEqualTo: subjectId)
-        .orderBy('deadline', descending: false)
-        .snapshots()
-        .map((snapshot) => snapshot.docs.map((doc) => Task.fromJson({
-          ...doc.data(),
-          'id': doc.id,
-        })).toList());
+    // Сравниваем с облачными и выбираем более новые
+    for (final cloudTask in cloudTasks) {
+      final localTask = mergedTasks[cloudTask.id];
+      
+      if (localTask == null) {
+        // Новая задача из облака
+        mergedTasks[cloudTask.id] = cloudTask;
+        await _sqlite.insertOrUpdateTask(cloudTask, userId);
+      } else {
+        // Сравниваем время изменения
+        final localTime = localTask.updatedAt ?? localTask.createdAt;
+        final cloudTime = cloudTask.updatedAt ?? cloudTask.createdAt;
+        
+        if (cloudTime.isAfter(localTime)) {
+          // Облачная версия новее
+          mergedTasks[cloudTask.id] = cloudTask;
+          await _sqlite.insertOrUpdateTask(cloudTask, userId);
+        } else if (localTime.isAfter(cloudTime)) {
+          // Локальная версия новее, загружаем в облако
+          await _uploadTaskToCloud(localTask);
+        }
+      }
+    }
+    
+    // Загружаем новые локальные задачи в облако
+    for (final localTask in localTasks) {
+      final hasInCloud = cloudTasks.any((ct) => ct.id == localTask.id);
+      if (!hasInCloud) {
+        await _uploadTaskToCloud(localTask);
+      }
+    }
+  }
+
+  Future<void> _uploadTaskToCloud(Task task) async {
+    try {
+      final userId = await getCurrentUserIdAsync();
+      await _firestore.collection('tasks').doc(task.id).set({
+        ...task.toJson(),
+        'userId': userId,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }).timeout(const Duration(seconds: 10));
+    } catch (e) {
+      print('Error uploading task to cloud: $e');
+    }
+  }
+
+
+
+  // Получение задач по предмету
+  Stream<List<Task>> getTasksBySubjectStream(String subjectId) {
+    return Stream.fromFuture(_getTasksBySubject(subjectId));
+  }
+
+  Future<List<Task>> _getTasksBySubject(String subjectId) async {
+    final allTasks = await _sqlite.getTasks(currentUserId);
+    return allTasks.where((task) => task.subjectId == subjectId).toList()
+      ..sort((a, b) => a.deadline.compareTo(b.deadline));
   }
 
   // Получение задач по статусу
   Stream<List<Task>> getTasksByStatusStream(TaskStatus status) {
-    if (!isUserAuthenticated) {
-      return Stream.value([]);
-    }
-    
-    return _firestore.collection('tasks')
-        .where('userId', isEqualTo: currentUserId)
-        .where('status', isEqualTo: status.index)
-        .orderBy('deadline', descending: false)
-        .snapshots()
-        .map((snapshot) => snapshot.docs.map((doc) => Task.fromJson({
-          ...doc.data(),
-          'id': doc.id,
-        })).toList());
+    return Stream.fromFuture(_getTasksByStatus(status));
+  }
+
+  Future<List<Task>> _getTasksByStatus(TaskStatus status) async {
+    final allTasks = await _sqlite.getTasks(currentUserId);
+    return allTasks.where((task) => task.status == status).toList()
+      ..sort((a, b) => a.deadline.compareTo(b.deadline));
   }
 
   Future<void> addTask(Task task) async {
-    // Сохраняем в локальное хранилище сразу
-    await _localStorage.addTask(task, currentUserId);
+    // Новая задача с меткой времени создания
+    final newTask = Task(
+      id: task.id,
+      subjectId: task.subjectId,
+      title: task.title,
+      description: task.description,
+      deadline: task.deadline,
+      plannedTime: task.plannedTime,
+      priority: task.priority,
+      status: task.status,
+      createdAt: task.createdAt,
+      updatedAt: DateTime.now(),
+    );
+    
+    // Сохраняем в SQLite
+    await _sqlite.insertOrUpdateTask(newTask, currentUserId);
     
     // Эмитим обновленные данные
     _loadAndEmitTasks();
     
-    // Если Firebase доступен и пользователь авторизован, синхронизируем
-    if (_firebaseAvailable && isUserAuthenticated) {
-      _syncTaskToFirebase(task);
+    // Запускаем фоновую синхронизацию
+    if (_firebaseAvailable && isAuthenticatedUser) {
+      _uploadTaskToCloud(newTask);
     }
   }
 
-  void _syncTaskToFirebase(Task task) async {
-    try {
-      await _firestore.collection('tasks').doc(task.id).set({
-        ...task.toJson(),
-        'userId': currentUserId,
-        'createdAt': FieldValue.serverTimestamp(),
-        'updatedAt': FieldValue.serverTimestamp(),
-      }).timeout(const Duration(seconds: 10));
-    } catch (e) {
-      print('Error syncing task to Firebase: $e');
-    }
-  }
 
   Future<void> updateTask(Task task) async {
-    // Обновляем в локальном хранилище сразу
-    await _localStorage.updateTask(task, currentUserId);
+    // Обновляем задачу с новой меткой времени
+    final updatedTask = task.copyWith(
+      updatedAt: DateTime.now(),
+    );
+    
+    // Обновляем в SQLite
+    await _sqlite.updateTask(updatedTask, currentUserId);
     
     // Эмитим обновленные данные
     _loadAndEmitTasks();
     
-    // Если Firebase доступен и пользователь авторизован, синхронизируем
-    if (_firebaseAvailable && isUserAuthenticated) {
-      try {
-        await _firestore.collection('tasks').doc(task.id).update({
-          ...task.toJson(),
-          'updatedAt': FieldValue.serverTimestamp(),
-        }).timeout(const Duration(seconds: 10));
-      } catch (e) {
-        print('Error syncing updated task to Firebase: $e');
-      }
+    // Запускаем фоновую синхронизацию
+    if (_firebaseAvailable && isAuthenticatedUser) {
+      _uploadTaskToCloud(updatedTask);
     }
   }
 
   Future<void> deleteTask(String id) async {
-    // Удаляем из локального хранилища сразу
-    await _localStorage.deleteTask(id, currentUserId);
+    // Мягкое удаление (помечаем как удаленную)
+    await _sqlite.deleteTask(id, currentUserId);
     
     // Эмитим обновленные данные
     _loadAndEmitTasks();
     
-    // Если Firebase доступен и пользователь авторизован, синхронизируем
-    if (_firebaseAvailable && isUserAuthenticated) {
+    // Удаляем из облака
+    if (_firebaseAvailable && isAuthenticatedUser) {
       try {
         await _firestore.collection('tasks').doc(id).delete()
             .timeout(const Duration(seconds: 10));
       } catch (e) {
-        print('Error deleting task from Firebase: $e');
+        print('Error deleting task from cloud: $e');
       }
     }
   }
 
   // Массовые операции
   Future<void> markMultipleTasksCompleted(List<String> taskIds) async {
-    if (!isUserAuthenticated) return;
-    
     try {
-      final batch = _firestore.batch();
-      
       for (final taskId in taskIds) {
-        final taskRef = _firestore.collection('tasks').doc(taskId);
-        batch.update(taskRef, {
-          'status': TaskStatus.completed.index,
-          'updatedAt': FieldValue.serverTimestamp(),
-        });
+        final task = await _sqlite.getTask(taskId, currentUserId);
+        if (task != null) {
+          final updatedTask = task.copyWith(
+            status: TaskStatus.completed,
+            updatedAt: DateTime.now(),
+          );
+          await _sqlite.updateTask(updatedTask, currentUserId);
+          
+          // Синхронизируем с облаком если возможно
+          if (_firebaseAvailable && isAuthenticatedUser) {
+            _uploadTaskToCloud(updatedTask);
+          }
+        }
       }
       
-      await batch.commit();
+      // Обновляем стрим
+      _loadAndEmitTasks();
     } catch (e) {
       print('Error marking tasks completed: $e');
       rethrow;
@@ -432,17 +588,23 @@ class DatabaseService {
   }
 
   Future<void> deleteMultipleTasks(List<String> taskIds) async {
-    if (!isUserAuthenticated) return;
-    
     try {
-      final batch = _firestore.batch();
-      
       for (final taskId in taskIds) {
-        final taskRef = _firestore.collection('tasks').doc(taskId);
-        batch.delete(taskRef);
+        await _sqlite.deleteTask(taskId, currentUserId);
+        
+        // Удаляем из облака если возможно
+        if (_firebaseAvailable && isAuthenticatedUser) {
+          try {
+            await _firestore.collection('tasks').doc(taskId).delete()
+                .timeout(const Duration(seconds: 10));
+          } catch (e) {
+            print('Error deleting task from cloud: $e');
+          }
+        }
       }
       
-      await batch.commit();
+      // Обновляем стрим
+      _loadAndEmitTasks();
     } catch (e) {
       print('Error deleting multiple tasks: $e');
       rethrow;
@@ -451,55 +613,9 @@ class DatabaseService {
 
   // Аналитика
   Future<Map<String, int>> getTasksAnalytics() async {
-    if (!isUserAuthenticated) {
-      return {
-        'total': 0,
-        'completed': 0,
-        'pending': 0,
-        'overdue': 0,
-      };
-    }
-    
     try {
-      final snapshot = await _firestore.collection('tasks')
-          .where('userId', isEqualTo: currentUserId)
-          .get();
-      
-      int total = snapshot.docs.length;
-      int completed = 0;
-      int pending = 0;
-      int overdue = 0;
-      
-      final now = DateTime.now();
-      
-      for (final doc in snapshot.docs) {
-        final data = doc.data();
-        final status = TaskStatus.values[data['status'] ?? 0];
-        final deadline = _parseDateTime(data['deadline']);
-        
-        switch (status) {
-          case TaskStatus.completed:
-            completed++;
-            break;
-          case TaskStatus.pending:
-            if (deadline.isBefore(now)) {
-              overdue++;
-            } else {
-              pending++;
-            }
-            break;
-          case TaskStatus.overdue:
-            overdue++;
-            break;
-        }
-      }
-      
-      return {
-        'total': total,
-        'completed': completed,
-        'pending': pending,
-        'overdue': overdue,
-      };
+      // Используем SQLite для получения статистики
+      return await _sqlite.getTaskStatistics(currentUserId);
     } catch (e) {
       print('Error getting tasks analytics: $e');
       return {
@@ -512,33 +628,21 @@ class DatabaseService {
   }
 
   Future<Map<String, int>> getTasksBySubjectAnalytics() async {
-    if (!isUserAuthenticated) {
-      return {};
-    }
-    
     try {
-      final tasksSnapshot = await _firestore.collection('tasks')
-          .where('userId', isEqualTo: currentUserId)
-          .get();
-      final subjectsSnapshot = await _firestore.collection('subjects')
-          .where('userId', isEqualTo: currentUserId)
-          .get();
+      final tasks = await _sqlite.getTasks(currentUserId);
+      final subjects = await _sqlite.getSubjects(currentUserId);
       
       final Map<String, int> result = {};
       final Map<String, String> subjectNames = {};
       
       // Получаем названия предметов
-      for (final doc in subjectsSnapshot.docs) {
-        final data = doc.data();
-        subjectNames[doc.id] = data['name'] ?? 'Unknown';
+      for (final subject in subjects) {
+        subjectNames[subject.id] = subject.name;
       }
       
       // Подсчитываем задачи по предметам
-      for (final doc in tasksSnapshot.docs) {
-        final data = doc.data();
-        final subjectId = data['subjectId'] as String;
-        final subjectName = subjectNames[subjectId] ?? 'Unknown';
-        
+      for (final task in tasks) {
+        final subjectName = subjectNames[task.subjectId] ?? 'Unknown';
         result[subjectName] = (result[subjectName] ?? 0) + 1;
       }
       
@@ -552,18 +656,94 @@ class DatabaseService {
   // Статус подключения
   bool get isOnline => _isOnline;
 
+  // Методы синхронизации для пользователя
+  Future<void> forceSyncNow() async {
+    if (!_firebaseAvailable || !isAuthenticatedUser) {
+      throw Exception('Синхронизация недоступна. Войдите в аккаунт для синхронизации данных.');
+    }
+    
+    try {
+      await _syncSubjectsWithCloud();
+      await _syncTasksWithCloud();
+    } catch (e) {
+      print('Error during forced sync: $e');
+      rethrow;
+    }
+  }
+
+  Future<bool> get canSync => Future.value(_firebaseAvailable && isAuthenticatedUser);
+  
+  Future<DateTime?> get lastSyncTime async {
+    if (!isAuthenticatedUser) return null;
+    
+    try {
+      return await _getLastSyncTime();
+    } catch (e) {
+      return null;
+    }
+  }
+
+  // Миграция данных при авторизации
+  Future<void> migrateToUser(String newUserId) async {
+    if (_currentUserId == null || _currentUserId!.startsWith('anonymous')) {
+      await _sqlite.migrateUserData(currentUserId, newUserId);
+      setCurrentUser(newUserId);
+      
+      // Запускаем синхронизацию с облаком
+      if (_firebaseAvailable) {
+        await forceSyncNow();
+      }
+    }
+  }
+
   // === USER PROFILE METHODS ===
 
   String? _currentUserId;
 
   void setCurrentUser(String? userId) {
     _currentUserId = userId;
-    _localStorage.setCurrentUserId(userId);
+    if (userId != null) {
+      _sqlite.setSetting('current_user_id', userId);
+    }
   }
 
-  String get currentUserId => _currentUserId ?? 'anonymous';
+  Future<DateTime> _getLastSyncTime() async {
+    final userId = await getCurrentUserIdAsync();
+    final timestampStr = await _sqlite.getSetting('last_sync_time', userId);
+    if (timestampStr != null) {
+      return DateTime.fromMillisecondsSinceEpoch(int.parse(timestampStr));
+    }
+    return DateTime.fromMillisecondsSinceEpoch(0); // Начало эпохи для первой синхронизации
+  }
 
-  bool get isUserAuthenticated => _currentUserId != null;
+  Future<void> _updateLastSyncTime(DateTime timestamp) async {
+    final userId = await getCurrentUserIdAsync();
+    await _sqlite.setSetting('last_sync_time', timestamp.millisecondsSinceEpoch.toString(), userId);
+    await _sqlite.updateUserLastSync(userId, timestamp);
+  }
+
+  String get currentUserId {
+    if (_currentUserId != null) return _currentUserId!;
+    
+    return 'anonymous';
+  }
+
+  Future<String> getCurrentUserIdAsync() async {
+    if (_currentUserId != null) return _currentUserId!;
+    
+    // Пытаемся загрузить из настроек
+    final userId = await _sqlite.getSetting('current_user_id');
+    if (userId != null) {
+      _currentUserId = userId;
+      return userId;
+    }
+    
+    return 'anonymous';
+  }
+
+  bool get isUserAuthenticated => _currentUserId != null && !_currentUserId!.startsWith('anonymous');
+  
+  bool get isAuthenticatedUser => isUserAuthenticated;
 
   // Сохранение/обновление профиля пользователя
   Future<void> saveUserProfile(UserProfile profile) async {
@@ -596,29 +776,39 @@ class DatabaseService {
     }
   }
 
-  // Получение статистики пользователя
+  // Кеш статистики пользователя
+  Map<String, Map<String, int>>? _userStatsCache;
+  DateTime? _statsCacheTime;
+  static const Duration _statsCacheDuration = Duration(minutes: 5);
+
+  // Получение статистики пользователя с кешированием
   Future<Map<String, int>> getUserStats(String userId) async {
     try {
-      final tasksSnapshot = await _firestore
-          .collection('tasks')
-          .where('userId', isEqualTo: userId)
-          .get();
+      // Проверяем кеш
+      final now = DateTime.now();
+      if (_userStatsCache != null && 
+          _statsCacheTime != null && 
+          now.difference(_statsCacheTime!).compareTo(_statsCacheDuration) < 0 &&
+          _userStatsCache!.containsKey(userId)) {
+        return _userStatsCache![userId]!;
+      }
 
-      final subjectsSnapshot = await _firestore
-          .collection('subjects')
-          .where('userId', isEqualTo: userId)
-          .get();
-
-      final totalTasks = tasksSnapshot.docs.length;
-      final completedTasks = tasksSnapshot.docs
-          .where((doc) => doc.data()['status'] == TaskStatus.completed.index)
-          .length;
-
-      return {
-        'totalTasks': totalTasks,
-        'completedTasks': completedTasks,
-        'totalSubjects': subjectsSnapshot.docs.length,
+      // Используем локальную SQLite базу данных в приоритете
+      final taskStats = await _sqlite.getTaskStatistics(userId);
+      final subjects = await _sqlite.getSubjects(userId);
+      
+      final stats = {
+        'totalTasks': taskStats['total'] ?? 0,
+        'completedTasks': taskStats['completed'] ?? 0,
+        'totalSubjects': subjects.length,
       };
+
+      // Кешируем результат
+      _userStatsCache ??= {};
+      _userStatsCache![userId] = stats;
+      _statsCacheTime = now;
+      
+      return stats;
     } catch (e) {
       print('Error getting user stats: $e');
       return {
@@ -627,6 +817,12 @@ class DatabaseService {
         'totalSubjects': 0,
       };
     }
+  }
+
+  // Очистка кеша статистики
+  void clearStatsCache() {
+    _userStatsCache = null;
+    _statsCacheTime = null;
   }
 
   // Удаление всех данных пользователя

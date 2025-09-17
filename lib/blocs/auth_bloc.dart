@@ -59,6 +59,8 @@ class AuthUpdateGeminiApiKey extends AuthEvent {
   List<Object?> get props => [apiKey];
 }
 
+class AuthContinueAsAnonymous extends AuthEvent {}
+
 // States
 abstract class AuthState extends Equatable {
   @override
@@ -103,6 +105,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<AuthDeleteAccount>(_onDeleteAccount);
     on<AuthUserChanged>(_onUserChanged);
     on<AuthUpdateGeminiApiKey>(_onUpdateGeminiApiKey);
+    on<AuthContinueAsAnonymous>(_onContinueAsAnonymous);
     
     // Автоматическая инициализация
     add(AuthInitialize());
@@ -216,12 +219,33 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     final user = event.user;
     
     if (user == null) {
-      _databaseService.setCurrentUser(null);
-      emit(AuthUnauthenticated());
+      // При отсутствии Firebase пользователя, переходим в режим анонимного использования
+      try {
+        // DatabaseService автоматически создаст анонимного пользователя
+        await _databaseService.initialize();
+        
+        // Создаем анонимный профиль
+        final anonymousProfile = UserProfile(
+          uid: _databaseService.currentUserId,
+          email: null,
+          displayName: 'Анонимный пользователь',
+          photoURL: null,
+          isAnonymous: true,
+          createdAt: DateTime.now(),
+          lastLoginAt: DateTime.now(),
+          totalTasks: 0,
+          completedTasks: 0,
+          totalSubjects: 0,
+        );
+        
+        emit(AuthAuthenticated(anonymousProfile));
+      } catch (e) {
+        emit(AuthError(e.toString()));
+      }
     } else {
       try {
-        // Устанавливаем текущего пользователя в DatabaseService
-        _databaseService.setCurrentUser(user.uid);
+        // Если есть анонимный пользователь в SQLite, мигрируем данные
+        await _databaseService.migrateToUser(user.uid);
         
         // Создаем или обновляем профиль пользователя
         UserProfile userProfile = await _createOrUpdateUserProfile(user);
@@ -286,5 +310,31 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     await _databaseService.saveUserProfile(userProfile);
     
     return userProfile;
+  }
+
+  Future<void> _onContinueAsAnonymous(AuthContinueAsAnonymous event, Emitter<AuthState> emit) async {
+    emit(AuthLoading());
+    try {
+      // Инициализируем DatabaseService для анонимного пользователя
+      await _databaseService.initialize();
+      
+      // Создаем анонимный профиль
+      final anonymousProfile = UserProfile(
+        uid: _databaseService.currentUserId,
+        email: null,
+        displayName: 'Анонимный пользователь',
+        photoURL: null,
+        isAnonymous: true,
+        createdAt: DateTime.now(),
+        lastLoginAt: DateTime.now(),
+        totalTasks: 0,
+        completedTasks: 0,
+        totalSubjects: 0,
+      );
+      
+      emit(AuthAuthenticated(anonymousProfile));
+    } catch (e) {
+      emit(AuthError(e.toString()));
+    }
   }
 }
