@@ -226,6 +226,9 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         // Если есть анонимный пользователь в SQLite, мигрируем данные
         await _databaseService.migrateToUser(user.uid);
 
+        // Устанавливаем текущего пользователя в DatabaseService
+        _databaseService.setCurrentUser(user.uid);
+
         // Создаем или обновляем профиль пользователя
         UserProfile userProfile = await _createOrUpdateUserProfile(user);
         emit(AuthAuthenticated(userProfile));

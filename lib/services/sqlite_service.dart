@@ -541,10 +541,10 @@ class SQLiteService {
 
       final row = result.first;
       return {
-        'total': row['total'] as int,
-        'completed': row['completed'] as int,
-        'pending': row['pending'] as int,
-        'overdue': row['overdue'] as int,
+        'total': (row['total'] as int?) ?? 0,
+        'completed': (row['completed'] as int?) ?? 0,
+        'pending': (row['pending'] as int?) ?? 0,
+        'overdue': (row['overdue'] as int?) ?? 0,
       };
     }, 'getTaskStatistics');
   }

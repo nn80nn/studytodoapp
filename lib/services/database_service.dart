@@ -234,13 +234,16 @@ class DatabaseService {
   Future<void> _uploadSubjectToCloud(Subject subject) async {
     try {
       final userId = await getCurrentUserIdAsync();
+      print('Uploading subject to cloud: ${subject.id} for user: $userId');
       await _firestore.collection('subjects').doc(subject.id).set({
         ...subject.toJson(),
         'userId': userId,
         'updatedAt': FieldValue.serverTimestamp(),
       }).timeout(const Duration(seconds: 10));
+      print('Subject uploaded successfully: ${subject.id}');
     } catch (e) {
       print('Error uploading subject to cloud: $e');
+      print('Stack trace: ${StackTrace.current}');
     }
   }
 
@@ -462,13 +465,16 @@ class DatabaseService {
   Future<void> _uploadTaskToCloud(Task task) async {
     try {
       final userId = await getCurrentUserIdAsync();
+      print('Uploading task to cloud: ${task.id} for user: $userId');
       await _firestore.collection('tasks').doc(task.id).set({
         ...task.toJson(),
         'userId': userId,
         'updatedAt': FieldValue.serverTimestamp(),
       }).timeout(const Duration(seconds: 10));
+      print('Task uploaded successfully: ${task.id}');
     } catch (e) {
       print('Error uploading task to cloud: $e');
+      print('Stack trace: ${StackTrace.current}');
     }
   }
 
@@ -693,15 +699,22 @@ class DatabaseService {
 
   // Методы синхронизации для пользователя
   Future<void> forceSyncNow() async {
+    print('forceSyncNow called - Firebase available: $_firebaseAvailable, Authenticated: $isAuthenticatedUser');
+
     if (!_firebaseAvailable || !isAuthenticatedUser) {
       throw Exception('Синхронизация недоступна. Войдите в аккаунт для синхронизации данных.');
     }
-    
+
     try {
+      print('Starting forced sync for user: $currentUserId');
       await _syncSubjectsWithCloud();
+      print('Subjects sync completed');
       await _syncTasksWithCloud();
+      print('Tasks sync completed');
+      print('Forced sync completed successfully');
     } catch (e) {
       print('Error during forced sync: $e');
+      print('Stack trace: ${StackTrace.current}');
       rethrow;
     }
   }
@@ -764,15 +777,21 @@ class DatabaseService {
   }
 
   Future<String> getCurrentUserIdAsync() async {
+    print('getCurrentUserIdAsync called - _currentUserId: $_currentUserId, currentUserId: $currentUserId');
+
     if (_currentUserId != null) return _currentUserId!;
-    
+
     // Пытаемся загрузить из настроек
     final userId = await _sqlite.getSetting('current_user_id');
+    print('SQLite current_user_id setting: $userId');
+
     if (userId != null) {
       _currentUserId = userId;
+      print('Setting _currentUserId to: $userId');
       return userId;
     }
-    
+
+    print('Returning anonymous user');
     return 'anonymous';
   }
 

@@ -58,10 +58,10 @@ class UserProfile {
     isAnonymous: json['isAnonymous'] ?? false,
     createdAt: _parseDateTime(json['createdAt']),
     lastLoginAt: _parseDateTime(json['lastLoginAt']),
-    totalTasks: json['totalTasks'] ?? 0,
-    completedTasks: json['completedTasks'] ?? 0,
-    totalSubjects: json['totalSubjects'] ?? 0,
-    totalCompletedAllTime: json['totalCompletedAllTime'] ?? 0,
+    totalTasks: _parseInt(json['totalTasks']) ?? 0,
+    completedTasks: _parseInt(json['completedTasks']) ?? 0,
+    totalSubjects: _parseInt(json['totalSubjects']) ?? 0,
+    totalCompletedAllTime: _parseInt(json['totalCompletedAllTime']) ?? 0,
     geminiApiKey: json['geminiApiKey'],
   );
 
@@ -83,6 +83,18 @@ class UserProfile {
       return DateTime.now();
     }
     return DateTime.now();
+  }
+
+  static int? _parseInt(dynamic value) {
+    try {
+      if (value == null) return null;
+      if (value is int) return value;
+      if (value is double) return value.toInt();
+      if (value is String) return int.tryParse(value);
+      return null;
+    } catch (e) {
+      return null;
+    }
   }
 
   UserProfile copyWith({
