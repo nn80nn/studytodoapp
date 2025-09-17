@@ -283,8 +283,9 @@ class SQLiteService {
   Future<void> deleteTask(String taskId, String userId) async {
     return await _safeDbOperation<void>((db) async {
       final now = DateTime.now().millisecondsSinceEpoch;
-      
-      await db.update(
+      print('deleteTask (SQLite): taskId=$taskId, userId=$userId, timestamp=$now');
+
+      final rowsAffected = await db.update(
         'tasks',
         {
           'is_deleted': 1,
@@ -293,21 +294,46 @@ class SQLiteService {
         where: 'id = ? AND user_id = ?',
         whereArgs: [taskId, userId],
       );
+
+      print('deleteTask (SQLite): $rowsAffected rows updated');
     });
   }
 
   Future<List<Task>> getTasksUpdatedAfter(String userId, DateTime timestamp) async {
     return await _safeDbOperation<List<Task>>((db) async {
+      print('getTasksUpdatedAfter: userId=$userId, timestamp=$timestamp (${timestamp.millisecondsSinceEpoch})');
+
       final List<Map<String, dynamic>> maps = await db.query(
         'tasks',
-        where: 'user_id = ? AND updated_at > ?',
+        where: 'user_id = ? AND updated_at > ? AND is_deleted = 0',
         whereArgs: [userId, timestamp.millisecondsSinceEpoch],
         orderBy: 'updated_at DESC',
       );
 
-      return List.generate(maps.length, (i) {
+      final tasks = List.generate(maps.length, (i) {
         return Task.fromJson(maps[i]);
       });
+
+      print('getTasksUpdatedAfter found ${tasks.length} updated tasks (excluding deleted)');
+      return tasks;
+    });
+  }
+
+  Future<List<String>> getDeletedTaskIdsAfter(String userId, DateTime timestamp) async {
+    return await _safeDbOperation<List<String>>((db) async {
+      print('getDeletedTaskIdsAfter: userId=$userId, timestamp=$timestamp (${timestamp.millisecondsSinceEpoch})');
+
+      final List<Map<String, dynamic>> maps = await db.query(
+        'tasks',
+        columns: ['id'],
+        where: 'user_id = ? AND is_deleted = 1 AND updated_at > ?',
+        whereArgs: [userId, timestamp.millisecondsSinceEpoch],
+      );
+
+      final deletedIds = maps.map((map) => map['id'] as String).toList();
+      print('getDeletedTaskIdsAfter found ${deletedIds.length} deleted tasks: $deletedIds');
+
+      return deletedIds;
     });
   }
 

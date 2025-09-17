@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:uuid/uuid.dart';
@@ -31,9 +30,9 @@ class DatabaseService {
   Future<void> initialize() async {
     await _sqlite.database; // Инициализируем SQLite
     _setupConnectivityListener();
-    _enableOfflineSupport();
+    await _enableOfflineSupport(); // Ждем инициализацию Firebase с таймаутом
     _checkFirebaseAvailability();
-    
+
     // Инициализируем анонимного пользователя, если необходимо
     await _initializeCurrentUser();
   }
@@ -62,13 +61,16 @@ class DatabaseService {
     });
   }
 
-  void _enableOfflineSupport() {
+  Future<void> _enableOfflineSupport() async {
     try {
-      _firestore.settings = const Settings(
-        persistenceEnabled: true,
-        cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
-      );
-      _firebaseAvailable = true;
+      // Добавляем таймаут для Firebase операций
+      await Future(() async {
+        _firestore.settings = const Settings(
+          persistenceEnabled: true,
+          cacheSizeBytes: Settings.CACHE_SIZE_UNLIMITED,
+        );
+        _firebaseAvailable = true;
+      }).timeout(const Duration(seconds: 5)); // 5 секунд таймаут
     } catch (e) {
       print('Firebase not available: $e');
       _firebaseAvailable = false;
@@ -382,25 +384,32 @@ class DatabaseService {
 
     try {
       final userId = await getCurrentUserIdAsync();
-      
+
       // Получаем время последней синхронизации
       final lastSyncTime = await _getLastSyncTime();
-      
+
       // Получаем изменения из облака после последней синхронизации
       final cloudTasks = await _getCloudTasksUpdatedAfter(lastSyncTime);
-      
+      final cloudDeletedTaskIds = await _getCloudDeletedTaskIdsAfter(lastSyncTime);
+
       // Получаем локальные изменения после последней синхронизации
       final localTasks = await _sqlite.getTasksUpdatedAfter(userId, lastSyncTime);
-      
+
       // Применяем алгоритм слияния (как в Steam Cloud)
       await _mergeTasks(localTasks, cloudTasks);
-      
+
+      // Применяем удаления из облака
+      for (final taskId in cloudDeletedTaskIds) {
+        print('Applying cloud deletion locally: $taskId');
+        await _sqlite.deleteTask(taskId, userId);
+      }
+
       // Обновляем время последней синхронизации
       await _updateLastSyncTime(DateTime.now());
-      
+
       // Обновляем стрим
       _loadAndEmitTasks();
-      
+
     } catch (e) {
       print('Error syncing tasks with cloud: $e');
     }
@@ -413,41 +422,80 @@ class DatabaseService {
         .where('updatedAt', isGreaterThan: Timestamp.fromDate(timestamp))
         .orderBy('updatedAt', descending: false)
         .get(GetOptions(source: Source.server));
-    
-    return snapshot.docs.map((doc) => Task.fromJson({
-      ...doc.data(),
-      'id': doc.id,
-    })).toList();
+
+    return snapshot.docs.map((doc) {
+      final data = doc.data();
+      return Task.fromJson({
+        ...data,
+        'id': doc.id,
+      });
+    }).where((task) {
+      // Фильтруем мягко удаленные задачи
+      return !(task.toJson()['is_deleted'] == true);
+    }).toList();
+  }
+
+  Future<List<String>> _getCloudDeletedTaskIdsAfter(DateTime timestamp) async {
+    final userId = await getCurrentUserIdAsync();
+    final snapshot = await _firestore.collection('tasks')
+        .where('userId', isEqualTo: userId)
+        .where('updatedAt', isGreaterThan: Timestamp.fromDate(timestamp))
+        .where('is_deleted', isEqualTo: true)
+        .orderBy('updatedAt', descending: false)
+        .get(GetOptions(source: Source.server));
+
+    return snapshot.docs.map((doc) => doc.id).toList();
   }
 
   Future<void> _mergeTasks(List<Task> localTasks, List<Task> cloudTasks) async {
+    print('_mergeTasks called with ${localTasks.length} local tasks and ${cloudTasks.length} cloud tasks');
     final userId = await getCurrentUserIdAsync();
     final Map<String, Task> mergedTasks = {};
-    
+
+    // Получаем время последней синхронизации
+    final lastSyncTime = await _getLastSyncTime();
+    print('Last sync time: $lastSyncTime');
+
+    // Получаем ID задач, удаленных локально после последней синхронизации
+    final deletedTaskIds = await _sqlite.getDeletedTaskIdsAfter(userId, lastSyncTime);
+    print('Deleted task IDs since last sync: $deletedTaskIds');
+
     // Добавляем локальные изменения
     for (final task in localTasks) {
       mergedTasks[task.id] = task;
     }
-    
+
     // Сравниваем с облачными и выбираем более новые
     for (final cloudTask in cloudTasks) {
       final localTask = mergedTasks[cloudTask.id];
-      
+
       if (localTask == null) {
+        // Проверяем, была ли эта задача удалена локально
+        if (deletedTaskIds.contains(cloudTask.id)) {
+          // Эта задача была удалена локально, не восстанавливаем её
+          // и удаляем из облака
+          print('Found deleted task in cloud, removing from cloud: ${cloudTask.id}');
+          await _deleteTaskFromCloud(cloudTask.id);
+          continue;
+        }
+
         // Новая задача из облака
+        print('Adding new task from cloud: ${cloudTask.id}');
         mergedTasks[cloudTask.id] = cloudTask;
         await _sqlite.insertOrUpdateTask(cloudTask, userId);
       } else {
         // Сравниваем время изменения
         final localTime = localTask.updatedAt ?? localTask.createdAt;
         final cloudTime = cloudTask.updatedAt ?? cloudTask.createdAt;
-        
+
         if (cloudTime.isAfter(localTime)) {
           // Облачная версия новее
+          print('Updating from cloud (cloud newer): ${cloudTask.id}');
           mergedTasks[cloudTask.id] = cloudTask;
           await _sqlite.insertOrUpdateTask(cloudTask, userId);
         } else if (localTime.isAfter(cloudTime)) {
           // Локальная версия новее, загружаем в облако
+          print('Uploading to cloud (local newer): ${localTask.id}');
           await _uploadTaskToCloud(localTask);
         }
       }
@@ -474,6 +522,21 @@ class DatabaseService {
       print('Task uploaded successfully: ${task.id}');
     } catch (e) {
       print('Error uploading task to cloud: $e');
+      print('Stack trace: ${StackTrace.current}');
+    }
+  }
+
+  Future<void> _deleteTaskFromCloud(String taskId) async {
+    try {
+      final userId = await getCurrentUserIdAsync();
+      print('Soft deleting task from cloud: $taskId for user: $userId');
+      await _firestore.collection('tasks').doc(taskId).update({
+        'is_deleted': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }).timeout(const Duration(seconds: 10));
+      print('Task soft deleted from cloud successfully: $taskId');
+    } catch (e) {
+      print('Error soft deleting task from cloud: $e');
       print('Stack trace: ${StackTrace.current}');
     }
   }
@@ -584,20 +647,21 @@ class DatabaseService {
   }
 
   Future<void> deleteTask(String id) async {
+    print('deleteTask called for task: $id');
+    print('_firebaseAvailable: $_firebaseAvailable, isAuthenticatedUser: $isAuthenticatedUser');
+
     // Мягкое удаление (помечаем как удаленную)
     await _sqlite.deleteTask(id, currentUserId);
-    
+
     // Эмитим обновленные данные
     _loadAndEmitTasks();
-    
+
     // Удаляем из облака
     if (_firebaseAvailable && isAuthenticatedUser) {
-      try {
-        await _firestore.collection('tasks').doc(id).delete()
-            .timeout(const Duration(seconds: 10));
-      } catch (e) {
-        print('Error deleting task from cloud: $e');
-      }
+      print('Attempting to delete task from cloud: $id');
+      await _deleteTaskFromCloud(id);
+    } else {
+      print('Skipping cloud deletion - Firebase not available or user not authenticated');
     }
   }
 
@@ -632,15 +696,10 @@ class DatabaseService {
     try {
       for (final taskId in taskIds) {
         await _sqlite.deleteTask(taskId, currentUserId);
-        
+
         // Удаляем из облака если возможно
         if (_firebaseAvailable && isAuthenticatedUser) {
-          try {
-            await _firestore.collection('tasks').doc(taskId).delete()
-                .timeout(const Duration(seconds: 10));
-          } catch (e) {
-            print('Error deleting task from cloud: $e');
-          }
+          await _deleteTaskFromCloud(taskId);
         }
       }
       
@@ -711,6 +770,7 @@ class DatabaseService {
       print('Subjects sync completed');
       await _syncTasksWithCloud();
       print('Tasks sync completed');
+      await _updateLastSyncTime(DateTime.now());
       print('Forced sync completed successfully');
     } catch (e) {
       print('Error during forced sync: $e');
@@ -947,6 +1007,9 @@ class DatabaseService {
               .set(resetProfile.toJson(), SetOptions(merge: true));
         }
       }
+
+      // Сбрасываем время последней синхронизации
+      await _sqlite.setSetting('last_sync_time', null, currentUserId);
 
       // Обновляем потоки данных
       _loadAndEmitTasks();

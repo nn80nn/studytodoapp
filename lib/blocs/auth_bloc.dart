@@ -285,6 +285,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       totalTasks: stats['totalTasks'] ?? 0,
       completedTasks: stats['completedTasks'] ?? 0,
       totalSubjects: stats['totalSubjects'] ?? 0,
+      totalCompletedAllTime: existingProfile?.totalCompletedAllTime ?? 0, // Сохраняем счетчик за всё время
       geminiApiKey: existingProfile?.geminiApiKey, // Сохраняем существующий API ключ
     );
 

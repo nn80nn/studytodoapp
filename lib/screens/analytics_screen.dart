@@ -82,10 +82,6 @@ class AnalyticsScreen extends StatelessWidget {
                   children: [
                     _buildUserProfile(context, authState.userProfile),
                     const SizedBox(height: 20),
-                    if (!authState.userProfile.isAnonymous)
-                      _buildSyncSection(context, authState.userProfile),
-                    if (!authState.userProfile.isAnonymous)
-                      const SizedBox(height: 20),
                     BlocBuilder<TasksBloc, TasksState>(
                       builder: (context, tasksState) {
                         return BlocBuilder<SubjectsBloc, SubjectsState>(
@@ -114,6 +110,10 @@ class AnalyticsScreen extends StatelessWidget {
                         );
                       },
                     ),
+                    if (!authState.userProfile.isAnonymous)
+                      const SizedBox(height: 20),
+                    if (!authState.userProfile.isAnonymous)
+                      _buildSyncSection(context, authState.userProfile),
                   ],
                 ),
               ),
