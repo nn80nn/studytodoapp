@@ -13,6 +13,9 @@ class UserProfile {
   final int totalTasks;
   final int completedTasks;
   final int totalSubjects;
+
+  // Счетчик всех выполненных задач за всё время (включая удалённые)
+  final int totalCompletedAllTime;
   
   // Настройки AI
   final String? geminiApiKey;
@@ -28,6 +31,7 @@ class UserProfile {
     this.totalTasks = 0,
     this.completedTasks = 0,
     this.totalSubjects = 0,
+    this.totalCompletedAllTime = 0,
     this.geminiApiKey,
   });
 
@@ -42,6 +46,7 @@ class UserProfile {
     'totalTasks': totalTasks,
     'completedTasks': completedTasks,
     'totalSubjects': totalSubjects,
+    'totalCompletedAllTime': totalCompletedAllTime,
     'geminiApiKey': geminiApiKey,
   };
 
@@ -56,6 +61,7 @@ class UserProfile {
     totalTasks: json['totalTasks'] ?? 0,
     completedTasks: json['completedTasks'] ?? 0,
     totalSubjects: json['totalSubjects'] ?? 0,
+    totalCompletedAllTime: json['totalCompletedAllTime'] ?? 0,
     geminiApiKey: json['geminiApiKey'],
   );
 
@@ -88,6 +94,7 @@ class UserProfile {
     int? totalTasks,
     int? completedTasks,
     int? totalSubjects,
+    int? totalCompletedAllTime,
     String? geminiApiKey,
   }) {
     return UserProfile(
@@ -101,6 +108,7 @@ class UserProfile {
       totalTasks: totalTasks ?? this.totalTasks,
       completedTasks: completedTasks ?? this.completedTasks,
       totalSubjects: totalSubjects ?? this.totalSubjects,
+      totalCompletedAllTime: totalCompletedAllTime ?? this.totalCompletedAllTime,
       geminiApiKey: geminiApiKey ?? this.geminiApiKey,
     );
   }

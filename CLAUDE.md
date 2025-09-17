@@ -127,6 +127,8 @@ Key methods:
 - `migrateToUser(userId)`: Moves anonymous data to authenticated user
 - `syncWithCloud()`: Manual sync trigger
 - `_syncInBackground()`: Automatic background sync
+- `clearAllUserData()`: Complete data wipe (local + cloud) while preserving all-time stats
+- `_incrementTotalCompletedAllTime()`: Auto-increments lifetime completed tasks counter
 
 ### User Model Architecture
 
@@ -195,6 +197,7 @@ try {
   totalTasks: int,
   completedTasks: int,
   totalSubjects: int,
+  totalCompletedAllTime: int,  // All-time completed tasks counter (including deleted)
   geminiApiKey?: String
 }
 ```
@@ -291,6 +294,25 @@ When testing with real Firebase, create required indexes:
 ### Notifications Currently Disabled
 `flutter_local_notifications` is commented out in pubspec.yaml due to platform compatibility issues. Re-enable when needed.
 
+## Recent Features and Updates
+
+### Analytics and Statistics
+- **All-time completed tasks tracking**: `totalCompletedAllTime` field preserves lifetime achievements
+- **Auto-increment on task completion**: Automatic tracking when tasks are marked as completed
+- **Data persistence through wipes**: All-time stats survive data clearing operations
+- **Analytics screen updates**: Enhanced statistics display with historical data
+
+### Data Management
+- **Complete data clearing**: Users can wipe all tasks and subjects while preserving achievements
+- **Dual confirmation dialogs**: Safety measures to prevent accidental data loss
+- **Progress indicators**: Loading states for data clearing and sync operations
+- **Error handling improvements**: Better Navigator context management for dialogs
+
+### UI/UX Improvements
+- **Enhanced PopupMenu**: Clear data option alongside account deletion
+- **Visual separation**: Statistics divided into current vs. all-time metrics
+- **Loading dialog fixes**: Proper dialog dismissal after operations complete
+
 ## Performance Considerations
 
 - SQLite operations are synchronous within async functions
@@ -298,3 +320,4 @@ When testing with real Firebase, create required indexes:
 - Real-time streams only enabled for authenticated users
 - Connectivity monitoring prevents unnecessary Firebase calls
 - Large datasets use pagination and lazy loading
+- Dialog management uses captured Navigator references to prevent context issues

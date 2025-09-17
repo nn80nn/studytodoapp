@@ -26,6 +26,8 @@ class AnalyticsScreen extends StatelessWidget {
                       context.read<AuthBloc>().add(AuthSignOut());
                     } else if (value == 'delete') {
                       _showDeleteAccountDialog(context);
+                    } else if (value == 'clear') {
+                      _showClearDataDialog(context);
                     }
                   },
                   itemBuilder: (context) => [
@@ -34,8 +36,24 @@ class AnalyticsScreen extends StatelessWidget {
                       child: Text('Выйти'),
                     ),
                     const PopupMenuItem(
+                      value: 'clear',
+                      child: Row(
+                        children: [
+                          Icon(Icons.clear_all, color: Colors.orange),
+                          SizedBox(width: 8),
+                          Text('Очистить данные'),
+                        ],
+                      ),
+                    ),
+                    const PopupMenuItem(
                       value: 'delete',
-                      child: Text('Удалить аккаунт'),
+                      child: Row(
+                        children: [
+                          Icon(Icons.delete_forever, color: Colors.red),
+                          SizedBox(width: 8),
+                          Text('Удалить аккаунт'),
+                        ],
+                      ),
                     ),
                   ],
                 );
@@ -75,7 +93,7 @@ class AnalyticsScreen extends StatelessWidget {
                             if (tasksState is TasksLoading || subjectsState is SubjectsLoading) {
                               return const Center(child: CircularProgressIndicator());
                             } else if (tasksState is TasksLoaded && subjectsState is SubjectsLoaded) {
-                              return _buildComprehensiveStats(tasksState.tasks, subjectsState.subjects.length);
+                              return _buildComprehensiveStats(tasksState.tasks, subjectsState.subjects.length, authState.userProfile);
                             } else if (tasksState is TasksError) {
                               return Card(
                                 child: Padding(
@@ -123,11 +141,11 @@ class AnalyticsScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildComprehensiveStats(List<Task> tasks, int subjectsCount) {
+  Widget _buildComprehensiveStats(List<Task> tasks, int subjectsCount, UserProfile profile) {
     final completedTasks = tasks.where((task) => task.status == TaskStatus.completed).length;
     final pendingTasks = tasks.where((task) => task.status == TaskStatus.pending).length;
-    final overdueTasks = tasks.where((task) => 
-        task.status == TaskStatus.overdue || 
+    final overdueTasks = tasks.where((task) =>
+        task.status == TaskStatus.overdue ||
         (task.status == TaskStatus.pending && task.deadline.isBefore(DateTime.now()))
     ).length;
 
@@ -150,6 +168,10 @@ class AnalyticsScreen extends StatelessWidget {
             _buildStatRow('В работе', pendingTasks, Colors.orange),
             _buildStatRow('Просрочено', overdueTasks, Colors.red),
             _buildStatRow('Предметов', subjectsCount, Colors.purple),
+            const SizedBox(height: 8),
+            const Divider(),
+            const SizedBox(height: 8),
+            _buildStatRow('Выполнено за всё время', profile.totalCompletedAllTime, Colors.teal),
             if (tasks.isNotEmpty) ...[
               const SizedBox(height: 16),
               Text('Процент выполнения: ${(completedTasks / tasks.length * 100).toStringAsFixed(1)}%'),
@@ -752,13 +774,17 @@ class AnalyticsScreen extends StatelessWidget {
 
   Future<void> _syncNow(BuildContext context) async {
     final databaseService = DatabaseService();
-    
+
+    // Сохраняем Navigator для закрытия диалога
+    final navigator = Navigator.of(context);
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+
     try {
       // Показываем индикатор загрузки
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (context) => const AlertDialog(
+        builder: (dialogContext) => const AlertDialog(
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -769,36 +795,114 @@ class AnalyticsScreen extends StatelessWidget {
           ),
         ),
       );
-      
+
       await databaseService.forceSyncNow();
-      
+
       // Закрываем диалог загрузки
+      navigator.pop();
+
+      // Обновляем данные в BLoC
       if (context.mounted) {
-        Navigator.of(context).pop();
-        
-        // Обновляем данные в BLoC
         context.read<TasksBloc>().add(RefreshTasks());
         context.read<SubjectsBloc>().add(RefreshSubjects());
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Синхронизация завершена успешно'),
-            backgroundColor: Colors.green,
-          ),
-        );
       }
+
+      scaffoldMessenger.showSnackBar(
+        const SnackBar(
+          content: Text('Синхронизация завершена успешно'),
+          backgroundColor: Colors.green,
+        ),
+      );
     } catch (e) {
       // Закрываем диалог загрузки в случае ошибки
-      if (context.mounted) {
-        Navigator.of(context).pop();
-        
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Ошибка синхронизации: $e'),
-            backgroundColor: Colors.red,
+      navigator.pop();
+
+      scaffoldMessenger.showSnackBar(
+        SnackBar(
+          content: Text('Ошибка синхронизации: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
+  void _showClearDataDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Очистить все данные?'),
+        content: const Text(
+          'Это действие удалит все ваши задачи и предметы как из локальной, так и из удалённой базы данных. Статистика выполненных задач за всё время сохранится.\n\nДанное действие необратимо!',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Отмена'),
           ),
-        );
+          TextButton(
+            onPressed: () async {
+              Navigator.of(context).pop();
+              await _clearAllData(context);
+            },
+            style: TextButton.styleFrom(foregroundColor: Colors.orange),
+            child: const Text('Очистить'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _clearAllData(BuildContext context) async {
+    final databaseService = DatabaseService();
+
+    // Сохраняем Navigator для закрытия диалога
+    final navigator = Navigator.of(context);
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+
+    try {
+      // Показываем индикатор загрузки
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => const AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('Очищаем данные...'),
+            ],
+          ),
+        ),
+      );
+
+      await databaseService.clearAllUserData();
+
+      // Закрываем диалог загрузки
+      navigator.pop();
+
+      // Обновляем данные в BLoC
+      if (context.mounted) {
+        context.read<TasksBloc>().add(RefreshTasks());
+        context.read<SubjectsBloc>().add(RefreshSubjects());
       }
+
+      scaffoldMessenger.showSnackBar(
+        const SnackBar(
+          content: Text('Все данные успешно удалены'),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      // Закрываем диалог загрузки в случае ошибки
+      navigator.pop();
+
+      scaffoldMessenger.showSnackBar(
+        SnackBar(
+          content: Text('Ошибка очистки данных: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
     }
   }
 

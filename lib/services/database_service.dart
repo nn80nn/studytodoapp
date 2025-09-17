@@ -525,20 +525,55 @@ class DatabaseService {
 
 
   Future<void> updateTask(Task task) async {
+    // Получаем старую задачу для проверки изменения статуса
+    final oldTasks = await _sqlite.getTasks(currentUserId);
+    final oldTask = oldTasks.firstWhere((t) => t.id == task.id, orElse: () => task);
+
     // Обновляем задачу с новой меткой времени
     final updatedTask = task.copyWith(
       updatedAt: DateTime.now(),
     );
-    
+
+    // Проверяем, была ли задача помечена как выполненная
+    final wasCompleted = oldTask.status == TaskStatus.completed;
+    final isNowCompleted = updatedTask.status == TaskStatus.completed;
+
     // Обновляем в SQLite
     await _sqlite.updateTask(updatedTask, currentUserId);
-    
+
+    // Если задача была отмечена как выполненная, увеличиваем счетчик
+    if (!wasCompleted && isNowCompleted) {
+      await _incrementTotalCompletedAllTime();
+    }
+
     // Эмитим обновленные данные
     _loadAndEmitTasks();
-    
+
     // Запускаем фоновую синхронизацию
     if (_firebaseAvailable && isAuthenticatedUser) {
       _uploadTaskToCloud(updatedTask);
+    }
+  }
+
+  Future<void> _incrementTotalCompletedAllTime() async {
+    try {
+      final currentProfile = await getUserProfile(currentUserId);
+      if (currentProfile != null) {
+        final updatedProfile = currentProfile.copyWith(
+          totalCompletedAllTime: currentProfile.totalCompletedAllTime + 1,
+        );
+        await saveUserProfile(updatedProfile);
+
+        // Синхронизируем с Firebase если доступен
+        if (_firebaseAvailable && isAuthenticatedUser) {
+          await _firestore
+              .collection('users')
+              .doc(currentUserId)
+              .set(updatedProfile.toJson(), SetOptions(merge: true));
+        }
+      }
+    } catch (e) {
+      print('Error incrementing total completed tasks: $e');
     }
   }
 
@@ -862,6 +897,80 @@ class DatabaseService {
   }
 
   // Очистка ресурсов
+  // Очистка всех данных пользователя
+  Future<void> clearAllUserData() async {
+    try {
+      print('Clearing all user data for user: $currentUserId');
+
+      // Удаляем все задачи и предметы из локальной базы
+      await _sqlite.clearAllUserData(currentUserId);
+
+      // Удаляем из Firebase если доступен
+      if (_firebaseAvailable && isAuthenticatedUser) {
+        await _clearFirebaseData();
+      }
+
+      // Сбрасываем профиль пользователя (но сохраняем основную информацию)
+      final currentProfile = await getUserProfile(currentUserId);
+      if (currentProfile != null) {
+        final resetProfile = currentProfile.copyWith(
+          totalTasks: 0,
+          completedTasks: 0,
+          totalSubjects: 0,
+          // НЕ сбрасываем totalCompletedAllTime - это счетчик за всё время
+        );
+        await saveUserProfile(resetProfile);
+
+        if (_firebaseAvailable && isAuthenticatedUser) {
+          await _firestore
+              .collection('users')
+              .doc(currentUserId)
+              .set(resetProfile.toJson(), SetOptions(merge: true));
+        }
+      }
+
+      // Обновляем потоки данных
+      _loadAndEmitTasks();
+      _loadAndEmitSubjects();
+
+      print('All user data cleared successfully');
+    } catch (e) {
+      print('Error clearing user data: $e');
+      rethrow;
+    }
+  }
+
+  Future<void> _clearFirebaseData() async {
+    try {
+      // Удаляем все задачи пользователя из Firebase
+      final tasksQuery = await _firestore
+          .collection('tasks')
+          .where('userId', isEqualTo: currentUserId)
+          .get();
+
+      final batch = _firestore.batch();
+      for (final doc in tasksQuery.docs) {
+        batch.delete(doc.reference);
+      }
+
+      // Удаляем все предметы пользователя из Firebase
+      final subjectsQuery = await _firestore
+          .collection('subjects')
+          .where('userId', isEqualTo: currentUserId)
+          .get();
+
+      for (final doc in subjectsQuery.docs) {
+        batch.delete(doc.reference);
+      }
+
+      await batch.commit();
+      print('Firebase data cleared successfully');
+    } catch (e) {
+      print('Error clearing Firebase data: $e');
+      throw e;
+    }
+  }
+
   void dispose() {
     _tasksStreamController?.close();
     _subjectsStreamController?.close();

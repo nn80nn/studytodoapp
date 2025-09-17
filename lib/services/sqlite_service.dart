@@ -549,6 +549,29 @@ class SQLiteService {
     }, 'getTaskStatistics');
   }
 
+  // Очистка всех данных пользователя
+  Future<void> clearAllUserData(String userId) async {
+    return await _safeDbOperation<void>((db) async {
+      await db.transaction((txn) async {
+        // Удаляем все задачи пользователя
+        await txn.delete(
+          'tasks',
+          where: 'user_id = ?',
+          whereArgs: [userId],
+        );
+
+        // Удаляем все предметы пользователя
+        await txn.delete(
+          'subjects',
+          where: 'user_id = ?',
+          whereArgs: [userId],
+        );
+
+        print('Cleared all data for user: $userId');
+      });
+    }, 'clearAllUserData');
+  }
+
   // Закрытие БД
   Future<void> close() async {
     final db = _database;
