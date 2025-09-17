@@ -217,36 +217,15 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
 
   Future<void> _onUserChanged(AuthUserChanged event, Emitter<AuthState> emit) async {
     final user = event.user;
-    
+
     if (user == null) {
-      // При отсутствии Firebase пользователя, переходим в режим анонимного использования
-      try {
-        // DatabaseService автоматически создаст анонимного пользователя
-        await _databaseService.initialize();
-        
-        // Создаем анонимный профиль
-        final anonymousProfile = UserProfile(
-          uid: _databaseService.currentUserId,
-          email: null,
-          displayName: 'Анонимный пользователь',
-          photoURL: null,
-          isAnonymous: true,
-          createdAt: DateTime.now(),
-          lastLoginAt: DateTime.now(),
-          totalTasks: 0,
-          completedTasks: 0,
-          totalSubjects: 0,
-        );
-        
-        emit(AuthAuthenticated(anonymousProfile));
-      } catch (e) {
-        emit(AuthError(e.toString()));
-      }
+      // При отсутствии Firebase пользователя, показываем экран входа
+      emit(AuthUnauthenticated());
     } else {
       try {
         // Если есть анонимный пользователь в SQLite, мигрируем данные
         await _databaseService.migrateToUser(user.uid);
-        
+
         // Создаем или обновляем профиль пользователя
         UserProfile userProfile = await _createOrUpdateUserProfile(user);
         emit(AuthAuthenticated(userProfile));
@@ -317,7 +296,10 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     try {
       // Инициализируем DatabaseService для анонимного пользователя
       await _databaseService.initialize();
-      
+
+      // Получаем статистику анонимного пользователя
+      final stats = await _databaseService.getUserStats(_databaseService.currentUserId);
+
       // Создаем анонимный профиль
       final anonymousProfile = UserProfile(
         uid: _databaseService.currentUserId,
@@ -327,11 +309,11 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
         isAnonymous: true,
         createdAt: DateTime.now(),
         lastLoginAt: DateTime.now(),
-        totalTasks: 0,
-        completedTasks: 0,
-        totalSubjects: 0,
+        totalTasks: stats['totalTasks'] ?? 0,
+        completedTasks: stats['completedTasks'] ?? 0,
+        totalSubjects: stats['totalSubjects'] ?? 0,
       );
-      
+
       emit(AuthAuthenticated(anonymousProfile));
     } catch (e) {
       emit(AuthError(e.toString()));

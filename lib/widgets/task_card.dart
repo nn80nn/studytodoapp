@@ -88,25 +88,30 @@ class TaskCard extends StatelessWidget {
             Row(
               children: [
                 // Дедлайн
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(
-                      Icons.schedule,
-                      size: 14,
-                      color: isOverdue ? Colors.red : theme.colorScheme.onSurfaceVariant,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      _formatDate(task.deadline),
-                      style: theme.textTheme.bodySmall?.copyWith(
+                Flexible(
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.schedule,
+                        size: 14,
                         color: isOverdue ? Colors.red : theme.colorScheme.onSurfaceVariant,
-                        fontWeight: isOverdue ? FontWeight.w500 : null,
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          _formatDate(task.deadline),
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: isOverdue ? Colors.red : theme.colorScheme.onSurfaceVariant,
+                            fontWeight: isOverdue ? FontWeight.w500 : null,
+                          ),
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-                const SizedBox(width: 16),
+                const SizedBox(width: 8),
                 
                 // Приоритет
                 Container(

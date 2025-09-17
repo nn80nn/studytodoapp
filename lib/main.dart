@@ -8,7 +8,7 @@ import 'blocs/tasks_bloc.dart';
 import 'blocs/auth_bloc.dart';
 import 'services/notification_service.dart';
 import 'services/database_service.dart';
-import 'widgets/main_navigation.dart';
+import 'widgets/auth_wrapper.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -31,7 +31,7 @@ class StudyTodoApp extends StatelessWidget {
     routes: [
       GoRoute(
         path: '/',
-        builder: (context, state) => const MainNavigation(),
+        builder: (context, state) => const AuthWrapper(),
       ),
     ],
   );

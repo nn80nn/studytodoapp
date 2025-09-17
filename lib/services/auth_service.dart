@@ -64,9 +64,12 @@ class AuthService {
       );
       print('Пользователь вошел через email: ${userCredential.user?.email}');
       return userCredential;
+    } on FirebaseAuthException catch (e) {
+      print('Ошибка Firebase Auth: ${e.code} - ${e.message}');
+      rethrow;
     } catch (e) {
-      print('Ошибка входа через email: $e');
-      throw e;
+      print('Общая ошибка входа через email: $e');
+      rethrow;
     }
   }
 
@@ -79,9 +82,12 @@ class AuthService {
       );
       print('Пользователь зарегистрирован: ${userCredential.user?.email}');
       return userCredential;
+    } on FirebaseAuthException catch (e) {
+      print('Ошибка Firebase Auth: ${e.code} - ${e.message}');
+      rethrow;
     } catch (e) {
-      print('Ошибка регистрации: $e');
-      throw e;
+      print('Общая ошибка регистрации: $e');
+      rethrow;
     }
   }
 
@@ -90,9 +96,12 @@ class AuthService {
     try {
       await _auth.sendPasswordResetEmail(email: email);
       print('Email для сброса пароля отправлен');
+    } on FirebaseAuthException catch (e) {
+      print('Ошибка Firebase Auth: ${e.code} - ${e.message}');
+      rethrow;
     } catch (e) {
-      print('Ошибка сброса пароля: $e');
-      throw e;
+      print('Общая ошибка сброса пароля: $e');
+      rethrow;
     }
   }
 
