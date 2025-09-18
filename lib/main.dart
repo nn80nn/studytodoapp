@@ -54,7 +54,7 @@ class StudyTodoApp extends StatelessWidget {
         BlocProvider(create: (context) => TasksBloc()..add(LoadTasks())),
       ],
       child: MaterialApp.router(
-        title: 'StudyTodo',
+        title: 'StudyToDo',
         debugShowCheckedModeBanner: false,
         theme: ThemeData(
           useMaterial3: true,

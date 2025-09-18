@@ -1,5 +1,5 @@
 name: studytodoapp
-description: "Красивое приложение для управления учебными задачами с ИИ помощником"
+description: "StudyToDo - Красивое приложение для управления учебными задачами с ИИ помощником"
 publish_to: 'none'
 
 version: 1.0.0+1
@@ -54,9 +54,10 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  
+
   flutter_lints: ^3.0.1
   build_runner: ^2.4.7
+  flutter_launcher_icons: ^0.13.1
   
   # Тестирование
   mockito: ^5.4.4
@@ -79,3 +80,9 @@ flutter:
   #         weight: 500
   #       - asset: fonts/Inter-Bold.ttf
   #         weight: 700
+
+flutter_launcher_icons:
+  android: "launcher_icon"
+  ios: false
+  image_path: "studytodo.png"
+  min_sdk_android: 21
