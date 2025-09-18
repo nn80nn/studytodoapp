@@ -10,10 +10,25 @@ class AuthService {
   final GoogleSignIn _googleSignIn = GoogleSignIn();
 
   // Текущий пользователь
-  User? get currentUser => _auth.currentUser;
-  
+  User? get currentUser {
+    try {
+      return _auth.currentUser;
+    } catch (e) {
+      print('Error getting current user: $e');
+      return null;
+    }
+  }
+
   // Stream изменений аутентификации
-  Stream<User?> get authStateChanges => _auth.authStateChanges();
+  Stream<User?> get authStateChanges {
+    try {
+      return _auth.authStateChanges();
+    } catch (e) {
+      print('Error getting auth state changes: $e');
+      // Возвращаем пустой stream с null значением если Firebase недоступен
+      return Stream.value(null);
+    }
+  }
 
   // Проверка аутентификации
   bool get isAuthenticated => currentUser != null;

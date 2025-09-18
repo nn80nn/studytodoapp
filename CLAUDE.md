@@ -20,6 +20,19 @@ StudyTodo is a Flutter application for managing study tasks with AI integration.
 - **Analytics**: fl_chart for data visualization
 - **Connectivity**: connectivity_plus for online/offline detection
 
+## Platform Support
+
+- **Android**: Full support, thoroughly tested and optimized
+- **iOS**: In development, basic functionality available
+- **Web**: Basic support, limited testing
+- **Windows**: Basic support, limited testing
+
+**Note**: The application is currently fully tested and optimized for Android. Support for other platforms is under development.
+
+## AI Features Availability
+
+Google Gemini AI features are not available in Russia due to Google's policy restrictions. Users from other regions can obtain API keys from [ai.google.dev](https://ai.google.dev/). The application remains fully functional without AI features.
+
 ## Development Commands
 
 ```bash
@@ -321,3 +334,31 @@ When testing with real Firebase, create required indexes:
 - Connectivity monitoring prevents unnecessary Firebase calls
 - Large datasets use pagination and lazy loading
 - Dialog management uses captured Navigator references to prevent context issues
+
+## Offline Support & Reliability
+
+The app implements robust offline-first architecture with comprehensive error handling:
+
+### Firebase Initialization
+- 10-second timeout for Firebase.initializeApp() in main.dart
+- Graceful fallback to SQLite-only mode when Firebase unavailable
+- Proper error logging for debugging offline issues
+
+### AuthBloc Offline Handling
+- 3-second timeout for auth initialization with fallback to anonymous mode
+- Automatic detection of Firebase unavailability
+- Safe stream handling when Firebase is not accessible
+- 10-second timeouts for user profile operations with local fallback
+
+### AuthService Resilience
+- Safe getter methods with try-catch for currentUser
+- Fallback empty stream for authStateChanges when Firebase unavailable
+- Prevents crashes when Firebase services are not initialized
+
+### Offline Behavior
+1. **Cold Start Offline**: App automatically enters anonymous mode after 3s
+2. **Firebase Unavailable**: Seamless degradation to SQLite-only operations
+3. **Network Lost**: Continues working with local data, syncs when reconnected
+4. **Timeout Handling**: Creates local profiles as fallback for slow/failed Firebase operations
+
+The app never hangs or crashes due to network issues and provides full functionality offline.

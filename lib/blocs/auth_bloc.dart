@@ -117,14 +117,29 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     return super.close();
   }
 
-  void _onInitialize(AuthInitialize event, Emitter<AuthState> emit) {
+  void _onInitialize(AuthInitialize event, Emitter<AuthState> emit) async {
     emit(AuthLoading());
-    
-    // Подписка на изменения аутентификации
-    _authStateSubscription?.cancel();
-    _authStateSubscription = _authService.authStateChanges.listen(
-      (user) => add(AuthUserChanged(user)),
-    );
+
+    try {
+      // Подписка на изменения аутентификации с таймаутом
+      _authStateSubscription?.cancel();
+      _authStateSubscription = _authService.authStateChanges.listen(
+        (user) => add(AuthUserChanged(user)),
+      );
+
+      // Даем Firebase несколько секунд для инициализации
+      await Future.delayed(const Duration(seconds: 3));
+
+      // Если Firebase не доступен или пользователь null, переходим к анонимному режиму
+      if (_authService.currentUser == null) {
+        print('Firebase not available or no user, switching to anonymous mode');
+        add(AuthContinueAsAnonymous());
+      }
+    } catch (e) {
+      print('Error during auth initialization: $e');
+      // При ошибке переходим к анонимному режиму
+      add(AuthContinueAsAnonymous());
+    }
   }
 
   Future<void> _onSignInWithGoogle(AuthSignInWithGoogle event, Emitter<AuthState> emit) async {
@@ -223,17 +238,45 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       emit(AuthUnauthenticated());
     } else {
       try {
-        // Если есть анонимный пользователь в SQLite, мигрируем данные
-        await _databaseService.migrateToUser(user.uid);
-
-        // Устанавливаем текущего пользователя в DatabaseService
-        _databaseService.setCurrentUser(user.uid);
-
-        // Создаем или обновляем профиль пользователя
-        UserProfile userProfile = await _createOrUpdateUserProfile(user);
-        emit(AuthAuthenticated(userProfile));
+        // Добавляем таймаут для операций с Firebase
+        await Future.wait([
+          _databaseService.migrateToUser(user.uid),
+          Future(() {
+            _databaseService.setCurrentUser(user.uid);
+          }),
+          _createOrUpdateUserProfile(user),
+        ]).timeout(
+          const Duration(seconds: 10),
+          onTimeout: () {
+            print('Firebase operations timed out, continuing with local data');
+            throw TimeoutException('Firebase operations timeout', const Duration(seconds: 10));
+          },
+        ).then((results) {
+          final userProfile = results[2] as UserProfile;
+          emit(AuthAuthenticated(userProfile));
+        });
       } catch (e) {
-        emit(AuthError(e.toString()));
+        print('Error in _onUserChanged: $e');
+        if (e is TimeoutException) {
+          // При таймауте создаем локальный профиль
+          try {
+            _databaseService.setCurrentUser(user.uid);
+            final localProfile = UserProfile(
+              uid: user.uid,
+              email: user.email,
+              displayName: user.displayName ?? 'Пользователь',
+              photoURL: user.photoURL,
+              isAnonymous: false,
+              createdAt: DateTime.now(),
+              lastLoginAt: DateTime.now(),
+            );
+            emit(AuthAuthenticated(localProfile));
+          } catch (localError) {
+            emit(AuthError('Ошибка создания локального профиля: ${localError.toString()}'));
+          }
+        } else {
+          emit(AuthError(e.toString()));
+        }
       }
     }
   }

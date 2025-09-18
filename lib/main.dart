@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
@@ -12,16 +13,24 @@ import 'widgets/auth_wrapper.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
+
   try {
-    await Firebase.initializeApp();
+    // Добавляем таймаут для инициализации Firebase
+    await Firebase.initializeApp().timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        print('Firebase initialization timed out - continuing without Firebase');
+        throw TimeoutException('Firebase initialization timeout', const Duration(seconds: 10));
+      },
+    );
+    print('Firebase initialized successfully');
   } catch (e) {
-    print('Firebase initialization failed: $e');
+    print('Firebase initialization failed: $e - continuing in offline mode');
   }
-  
+
   await NotificationService().initialize();
   await DatabaseService().initialize();
-  
+
   runApp(StudyTodoApp());
 }
 

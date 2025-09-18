@@ -337,6 +337,24 @@ class SQLiteService {
     });
   }
 
+  Future<List<String>> getDeletedSubjectIdsAfter(String userId, DateTime timestamp) async {
+    return await _safeDbOperation<List<String>>((db) async {
+      print('getDeletedSubjectIdsAfter: userId=$userId, timestamp=$timestamp (${timestamp.millisecondsSinceEpoch})');
+
+      final List<Map<String, dynamic>> maps = await db.query(
+        'subjects',
+        columns: ['id'],
+        where: 'user_id = ? AND is_deleted = 1 AND updated_at > ?',
+        whereArgs: [userId, timestamp.millisecondsSinceEpoch],
+      );
+
+      final deletedIds = maps.map((map) => map['id'] as String).toList();
+      print('getDeletedSubjectIdsAfter found ${deletedIds.length} deleted subjects: $deletedIds');
+
+      return deletedIds;
+    });
+  }
+
   // Предметы
   Future<List<Subject>> getSubjects(String userId) async {
     return await _safeDbOperation<List<Subject>>((db) async {
@@ -596,6 +614,42 @@ class SQLiteService {
         print('Cleared all data for user: $userId');
       });
     }, 'clearAllUserData');
+  }
+
+  // Очистка старых удаленных записей
+  Future<void> cleanupOldDeletedTasks(String userId, {int daysToKeep = 14}) async {
+    return await _safeDbOperation<void>((db) async {
+      final cutoffTime = DateTime.now().subtract(Duration(days: daysToKeep));
+      print('Cleaning up deleted tasks older than $cutoffTime (${cutoffTime.millisecondsSinceEpoch})');
+
+      final result = await db.delete(
+        'tasks',
+        where: 'user_id = ? AND is_deleted = 1 AND updated_at < ?',
+        whereArgs: [userId, cutoffTime.millisecondsSinceEpoch],
+      );
+
+      print('Cleaned up $result old deleted tasks');
+    });
+  }
+
+  Future<void> cleanupOldDeletedSubjects(String userId, {int daysToKeep = 14}) async {
+    return await _safeDbOperation<void>((db) async {
+      final cutoffTime = DateTime.now().subtract(Duration(days: daysToKeep));
+      print('Cleaning up deleted subjects older than $cutoffTime (${cutoffTime.millisecondsSinceEpoch})');
+
+      final result = await db.delete(
+        'subjects',
+        where: 'user_id = ? AND is_deleted = 1 AND updated_at < ?',
+        whereArgs: [userId, cutoffTime.millisecondsSinceEpoch],
+      );
+
+      print('Cleaned up $result old deleted subjects');
+    });
+  }
+
+  Future<void> cleanupOldDeletedRecords(String userId, {int daysToKeep = 14}) async {
+    await cleanupOldDeletedTasks(userId, daysToKeep: daysToKeep);
+    await cleanupOldDeletedSubjects(userId, daysToKeep: daysToKeep);
   }
 
   // Закрытие БД

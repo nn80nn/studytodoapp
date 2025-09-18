@@ -153,25 +153,32 @@ class DatabaseService {
 
     try {
       final userId = await getCurrentUserIdAsync();
-      
+
       // Получаем время последней синхронизации
       final lastSyncTime = await _getLastSyncTime();
-      
+
       // Получаем изменения из облака после последней синхронизации
       final cloudSubjects = await _getCloudSubjectsUpdatedAfter(lastSyncTime);
-      
+      final cloudDeletedSubjectIds = await _getCloudDeletedSubjectIdsAfter(lastSyncTime);
+
       // Получаем локальные изменения после последней синхронизации
       final localSubjects = await _sqlite.getSubjectsUpdatedAfter(userId, lastSyncTime);
-      
+
       // Применяем алгоритм слияния (как в Steam Cloud)
       await _mergeSubjects(localSubjects, cloudSubjects);
-      
+
+      // Применяем удаления из облака
+      for (final subjectId in cloudDeletedSubjectIds) {
+        print('Applying cloud deletion locally: $subjectId');
+        await _sqlite.deleteSubject(subjectId, userId);
+      }
+
       // Обновляем время последней синхронизации
       await _updateLastSyncTime(DateTime.now());
-      
+
       // Обновляем стрим
       _loadAndEmitSubjects();
-      
+
     } catch (e) {
       print('Error syncing subjects with cloud: $e');
     }
@@ -184,50 +191,90 @@ class DatabaseService {
         .where('updatedAt', isGreaterThan: Timestamp.fromDate(timestamp))
         .orderBy('updatedAt', descending: false)
         .get(GetOptions(source: Source.server));
-    
-    return snapshot.docs.map((doc) => Subject.fromJson({
-      ...doc.data(),
-      'id': doc.id,
-    })).toList();
+
+    return snapshot.docs.map((doc) {
+      final data = doc.data();
+      return Subject.fromJson({
+        ...data,
+        'id': doc.id,
+      });
+    }).where((subject) {
+      // Фильтруем мягко удаленные предметы
+      return !(subject.toJson()['is_deleted'] == true);
+    }).toList();
+  }
+
+  Future<List<String>> _getCloudDeletedSubjectIdsAfter(DateTime timestamp) async {
+    final userId = await getCurrentUserIdAsync();
+    final snapshot = await _firestore.collection('subjects')
+        .where('userId', isEqualTo: userId)
+        .where('updatedAt', isGreaterThan: Timestamp.fromDate(timestamp))
+        .where('is_deleted', isEqualTo: true)
+        .orderBy('updatedAt', descending: false)
+        .get(GetOptions(source: Source.server));
+
+    return snapshot.docs.map((doc) => doc.id).toList();
   }
 
   Future<void> _mergeSubjects(List<Subject> localSubjects, List<Subject> cloudSubjects) async {
+    print('_mergeSubjects called with ${localSubjects.length} local subjects and ${cloudSubjects.length} cloud subjects');
     final userId = await getCurrentUserIdAsync();
     final Map<String, Subject> mergedSubjects = {};
-    
+
+    // Получаем время последней синхронизации
+    final lastSyncTime = await _getLastSyncTime();
+    print('Last sync time: $lastSyncTime');
+
+    // Получаем ID предметов, удаленных локально после последней синхронизации
+    final deletedSubjectIds = await _sqlite.getDeletedSubjectIdsAfter(userId, lastSyncTime);
+    print('Deleted subject IDs since last sync: $deletedSubjectIds');
+
     // Добавляем локальные изменения
     for (final subject in localSubjects) {
       mergedSubjects[subject.id] = subject;
     }
-    
+
     // Сравниваем с облачными и выбираем более новые
     for (final cloudSubject in cloudSubjects) {
       final localSubject = mergedSubjects[cloudSubject.id];
-      
+
       if (localSubject == null) {
+        // Проверяем, был ли этот предмет удален локально
+        if (deletedSubjectIds.contains(cloudSubject.id)) {
+          // Этот предмет был удален локально, не восстанавливаем его
+          // и удаляем из облака
+          print('Found deleted subject in cloud, removing from cloud: ${cloudSubject.id}');
+          await _deleteSubjectFromCloud(cloudSubject.id);
+          continue;
+        }
+
         // Новый предмет из облака
+        print('Adding new subject from cloud: ${cloudSubject.id}');
         mergedSubjects[cloudSubject.id] = cloudSubject;
         await _sqlite.insertOrUpdateSubject(cloudSubject, userId);
       } else {
         // Сравниваем время изменения
         final localTime = localSubject.updatedAt ?? localSubject.createdAt;
         final cloudTime = cloudSubject.updatedAt ?? cloudSubject.createdAt;
-        
+
         if (cloudTime.isAfter(localTime)) {
           // Облачная версия новее
+          print('Updating from cloud (cloud newer): ${cloudSubject.id}');
           mergedSubjects[cloudSubject.id] = cloudSubject;
           await _sqlite.insertOrUpdateSubject(cloudSubject, userId);
         } else if (localTime.isAfter(cloudTime)) {
           // Локальная версия новее, загружаем в облако
+          print('Uploading to cloud (local newer): ${localSubject.id}');
           await _uploadSubjectToCloud(localSubject);
         }
       }
     }
-    
+
     // Загружаем новые локальные предметы в облако
     for (final localSubject in localSubjects) {
       final hasInCloud = cloudSubjects.any((cs) => cs.id == localSubject.id);
       if (!hasInCloud) {
+        print('Uploading new local subject to cloud: ${localSubject.id}');
         await _uploadSubjectToCloud(localSubject);
       }
     }
@@ -313,13 +360,9 @@ class DatabaseService {
     // Эмитим обновленные данные
     _loadAndEmitSubjects();
     
-    // Удаляем из облака
+    // Мягкое удаление из облака
     if (_firebaseAvailable && isAuthenticatedUser) {
-      try {
-        await _firestore.collection('subjects').doc(id).delete();
-      } catch (e) {
-        print('Error deleting subject from cloud: $e');
-      }
+      await _deleteSubjectFromCloud(id);
     }
   }
 
@@ -537,6 +580,21 @@ class DatabaseService {
       print('Task soft deleted from cloud successfully: $taskId');
     } catch (e) {
       print('Error soft deleting task from cloud: $e');
+      print('Stack trace: ${StackTrace.current}');
+    }
+  }
+
+  Future<void> _deleteSubjectFromCloud(String subjectId) async {
+    try {
+      final userId = await getCurrentUserIdAsync();
+      print('Soft deleting subject from cloud: $subjectId for user: $userId');
+      await _firestore.collection('subjects').doc(subjectId).update({
+        'is_deleted': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }).timeout(const Duration(seconds: 10));
+      print('Subject soft deleted from cloud successfully: $subjectId');
+    } catch (e) {
+      print('Error soft deleting subject from cloud: $e');
       print('Stack trace: ${StackTrace.current}');
     }
   }
@@ -772,6 +830,10 @@ class DatabaseService {
       print('Tasks sync completed');
       await _updateLastSyncTime(DateTime.now());
       print('Forced sync completed successfully');
+
+      // Очищаем старые удаленные записи (раз в день при ручной синхронизации)
+      await cleanupOldDeletedRecords();
+      print('Cleanup of old deleted records completed');
     } catch (e) {
       print('Error during forced sync: $e');
       print('Stack trace: ${StackTrace.current}');
@@ -1079,5 +1141,73 @@ class DatabaseService {
       return DateTime.now();
     }
     return DateTime.now();
+  }
+
+  // Очистка старых удаленных записей
+  Future<void> cleanupOldDeletedTasksFromCloud({int daysToKeep = 14}) async {
+    if (!_firebaseAvailable || !isAuthenticatedUser) return;
+
+    try {
+      final userId = await getCurrentUserIdAsync();
+      final cutoffTime = DateTime.now().subtract(Duration(days: daysToKeep));
+      print('Cleaning up old deleted tasks from cloud older than $cutoffTime');
+
+      final snapshot = await _firestore.collection('tasks')
+          .where('userId', isEqualTo: userId)
+          .where('is_deleted', isEqualTo: true)
+          .where('updatedAt', isLessThan: Timestamp.fromDate(cutoffTime))
+          .get();
+
+      final batch = _firestore.batch();
+      for (final doc in snapshot.docs) {
+        batch.delete(doc.reference);
+      }
+
+      if (snapshot.docs.isNotEmpty) {
+        await batch.commit();
+        print('Cleaned up ${snapshot.docs.length} old deleted tasks from cloud');
+      }
+    } catch (e) {
+      print('Error cleaning up old deleted tasks from cloud: $e');
+    }
+  }
+
+  Future<void> cleanupOldDeletedSubjectsFromCloud({int daysToKeep = 14}) async {
+    if (!_firebaseAvailable || !isAuthenticatedUser) return;
+
+    try {
+      final userId = await getCurrentUserIdAsync();
+      final cutoffTime = DateTime.now().subtract(Duration(days: daysToKeep));
+      print('Cleaning up old deleted subjects from cloud older than $cutoffTime');
+
+      final snapshot = await _firestore.collection('subjects')
+          .where('userId', isEqualTo: userId)
+          .where('is_deleted', isEqualTo: true)
+          .where('updatedAt', isLessThan: Timestamp.fromDate(cutoffTime))
+          .get();
+
+      final batch = _firestore.batch();
+      for (final doc in snapshot.docs) {
+        batch.delete(doc.reference);
+      }
+
+      if (snapshot.docs.isNotEmpty) {
+        await batch.commit();
+        print('Cleaned up ${snapshot.docs.length} old deleted subjects from cloud');
+      }
+    } catch (e) {
+      print('Error cleaning up old deleted subjects from cloud: $e');
+    }
+  }
+
+  Future<void> cleanupOldDeletedRecords({int daysToKeep = 14}) async {
+    final userId = await getCurrentUserIdAsync();
+
+    // Очищаем локальные записи
+    await _sqlite.cleanupOldDeletedRecords(userId, daysToKeep: daysToKeep);
+
+    // Очищаем записи из облака
+    await cleanupOldDeletedTasksFromCloud(daysToKeep: daysToKeep);
+    await cleanupOldDeletedSubjectsFromCloud(daysToKeep: daysToKeep);
   }
 }
